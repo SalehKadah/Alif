@@ -39,6 +39,22 @@ jobs:
       - name: Build
         run: msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
 
+      # بناء Debug يفعّل AddressSanitizer، فيعتمد الملف التنفيذي على
+      # clang_rt.asan_dynamic-x86_64.dll وهي في مجلد أدوات MSVC لا في مسار
+      # النظام، فلا يبدأ البرنامج أصلاً بدونها. إضافتها تُبقي ASAN عاملاً
+      # أثناء الاختبارات بدل تعطيله.
+      - name: إضافة وقت تشغيل ASAN إلى المسار
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          $dir = "$vs\VC\Tools\MSVC\$ver\bin\Hostx64\x64"
+          if (-not (Test-Path "$dir\clang_rt.asan_dynamic-x86_64.dll")) {
+            throw "لم يُعثر على وقت تشغيل ASAN في $dir"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+
       # البناء وحده لا يكشف علل وقت التشغيل، فنشغّل الأمثلة والاختبارات
       - name: اختبارات الدخان
         shell: bash
