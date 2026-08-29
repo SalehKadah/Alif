@@ -432,6 +432,9 @@
     <ClInclude Include="..\source\AlifCore\Include\Core\AlifCore_GlobalString.h">
       <Filter>Include\Core</Filter>
     </ClInclude>
+    <ClInclude Include="..\source\AlifCore\Include\Core\AlifCore_FileSuffix.h">
+      <Filter>Include\Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\source\AlifCore\Include\Core\AlifCore_Import.h">
       <Filter>Include\Core</Filter>
     </ClInclude>

@@ -202,7 +202,7 @@ sudo apt install build-essential
 ولتنفيذ ملف ألف قم بتمرير اسم الملف 
 
 ```sh
-./alif filename.alif
+./alif ملف.الف
 ```
 
 ### نظام ماك (Mac):
@@ -222,7 +222,7 @@ sudo apt install build-essential
 ولتنفيذ ملف ألف قم بتمرير اسم الملف
 
 ```sh
-./alif filename.alif
+./alif ملف.الف
 ```
 
 

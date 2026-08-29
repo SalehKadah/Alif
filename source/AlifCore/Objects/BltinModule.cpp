@@ -656,15 +656,20 @@ static AlifObject* builtin_inputImpl(AlifObject* module, AlifObject* prompt) { /
 		}
 		s = alifOS_readline(stdin, stdout, promptstr);
 		if (s == nullptr) {
-			//alifErr_checkSignals();
-			if (!alifErr_occurred())
-				//alifErr_setNone(_alifExcKeyboardInterrupt_);
-				goto _readline_errors;
+			/* انتهاء الإدخال أو مقاطعته. لا بد من ضبط خطأ قبل الإرجاع:
+			   كان التنفيذ يسقط إلى strlen على مؤشر فارغ فينهار البرنامج،
+			   أو يرجع بلا خطأ فيُبلَّغ "قام بالإرجاع بدون ضبط خطأ". */
+			if (!alifErr_occurred()) {
+				alifErr_setString(_alifExcRuntimeError_,
+					"ادخل: انتهى الإدخال");
+			}
+			goto _readline_errors;
 		}
 
 		len = strlen(s);
 		if (len == 0) {
-			//alifErr_setNone(_alifExcEOFError_);
+			alifErr_setString(_alifExcRuntimeError_,
+				"ادخل: انتهى الإدخال");
 			result = nullptr;
 		}
 		else {

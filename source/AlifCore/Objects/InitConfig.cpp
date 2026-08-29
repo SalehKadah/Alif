@@ -1,5 +1,6 @@
 #include "alif.h"
 
+#include "AlifCore_FileSuffix.h"
 #include "AlifCore_GetOption.h"
 #include "AlifCore_InitConfig.h"
 #include "AlifCore_Interpreter.h"
@@ -1726,11 +1727,15 @@ static AlifStatus core_readPreCMDLine(AlifConfig* _config, AlifPreCmdline* _preC
 	return ALIFSTATUS_OK();
 }
 
+/* اللواحق مُعرَّفة في AlifCore_FileSuffix.h - انظره لسبب الترميز الصريح */
 static AlifIntT alif_extension(wchar_t* _filename) { //* alif
 	const wchar_t* dotSuffix = wcsrchr(_filename, L'.');
 	if (!dotSuffix) { return 0; }
 
-	return wcscmp(dotSuffix, L".alif") == 0 or wcscmp(dotSuffix, L".الف") == 0;
+	return wcscmp(dotSuffix, ALIF_WSUFFIX_SOURCE_EN) == 0
+		or wcscmp(dotSuffix, ALIF_WSUFFIX_SOURCE_AR) == 0
+		or wcscmp(dotSuffix, ALIF_WSUFFIX_LIB_EN) == 0
+		or wcscmp(dotSuffix, ALIF_WSUFFIX_LIB_AR) == 0;
 }
 
 static AlifStatus config_runFileNameAbsPath(AlifConfig* _config) { // 2963
@@ -1740,9 +1745,11 @@ static AlifStatus config_runFileNameAbsPath(AlifConfig* _config) { // 2963
 		return ALIFSTATUS_OK();
 	}
 
-	// يتم التحقق من لاحقة الملف والتي يجب ان تكون .alif او .الف
+	// يتم التحقق من لاحقة الملف والتي يجب ان تكون .الف او .مكتبة
 	if (!alif_extension(filename)) {
-		printf("%s \n\n", "تأكد من لاحقة الملف \n يجب ان ينتهي اسم الملف بـ .alif او .الف");
+		printf("%s \n\n", "تأكد من لاحقة الملف \n يجب ان ينتهي اسم الملف بـ "
+			ALIF_SUFFIX_SOURCE_AR " او " ALIF_SUFFIX_LIB_AR
+			" (او " ALIF_SUFFIX_SOURCE_EN " او " ALIF_SUFFIX_LIB_EN ")");
 		return ALIFSTATUS_EXIT(0);
 	}
 

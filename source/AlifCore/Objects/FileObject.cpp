@@ -31,8 +31,10 @@ AlifObject* alifFile_getLine(AlifObject* _f, AlifIntT _n) { // 51
 		AlifSizeT len = ALIFBYTES_GET_SIZE(result);
 		if (len == 0) {
 			ALIF_SETREF(result, nullptr);
-			//alifErr_setString(_alifExcEOFError_,
-			//	"EOF when reading a line");
+			/* يجب ضبط خطأ مع إرجاع nullptr، وإلا أبلغ المفسّر
+			   "قام بالإرجاع بدون ضبط خطأ" عند نهاية الإدخال */
+			alifErr_setString(_alifExcRuntimeError_,
+				"انتهى الإدخال أثناء قراءة سطر");
 		}
 		else if (s[len - 1] == '\n') {
 			(void)_alifBytes_resize(&result, len - 1);
@@ -42,8 +44,10 @@ AlifObject* alifFile_getLine(AlifObject* _f, AlifIntT _n) { // 51
 		AlifSizeT len = ALIFUSTR_GET_LENGTH(result);
 		if (len == 0) {
 			ALIF_SETREF(result, nullptr);
-			//alifErr_setString(_alifExcEOFError_,
-			//	"EOF when reading a line");
+			/* يجب ضبط خطأ مع إرجاع nullptr، وإلا أبلغ المفسّر
+			   "قام بالإرجاع بدون ضبط خطأ" عند نهاية الإدخال */
+			alifErr_setString(_alifExcRuntimeError_,
+				"انتهى الإدخال أثناء قراءة سطر");
 		}
 		else if (ALIFUSTR_READ_CHAR(result, len - 1) == '\n') {
 			AlifObject* v{};

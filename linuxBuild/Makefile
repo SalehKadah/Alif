@@ -1,5 +1,13 @@
 CPP = c++ # المترجم
-CPPFLAGS = -std=c++20
+# النصوص العربية في الشيفرة المصدرية - مثل لواحق الملفات .الف و .مكتبة - يجب
+# 	أن تبقى UTF-8 مهما كانت لغة النظام. مع gcc يلزم علمان صريحان لذلك،
+# 	أما clang فيعامل المصدر والتنفيذ بـ UTF-8 دائماً ولا يقبل -fexec-charset،
+# 	فإضافتهما على ماك تفشل الترجمة. لذا نضيفهما فقط حين يكون المترجم gcc.
+IS_CLANG := $(shell $(CPP) --version 2>/dev/null | grep -ci clang)
+ifeq ($(IS_CLANG),0)
+CHARSET_FLAGS = -finput-charset=UTF-8 -fexec-charset=UTF-8
+endif
+CPPFLAGS = -std=c++20 $(CHARSET_FLAGS)
 RELEASE_FLAGS = -O2 -w
 DEBUG_FLAGS = -O0 -g
 # -g تخزين معلومات debug
@@ -103,7 +111,7 @@ $(TARGET_FREEZE): $(OBJECTS) | $(BUILD_DIR)
 	@$(CPP) $(filter-out build/obj/Alif/alif.o build/obj/AlifCore/Objects/Frozen.o, $^) -o $@
 	@echo "تم بناء مجرد الشيفرة بنجاح"
 	@echo "جاري بناء ومعالجة البرامج المكتوبة بلغة ألف"
-	@$(shell) ./build/freezemodule GetPath ../source/Modules/تحديد_المسارات.alif GetPath.h
+	@$(shell) ./build/freezemodule GetPath ../source/Modules/تحديد_المسارات.الف GetPath.h
 	@$(shell) mv -f GetPath.h ../source/AlifCore/Include/Main/FrozenModules
 
 

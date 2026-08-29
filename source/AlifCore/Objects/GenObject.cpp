@@ -121,6 +121,17 @@ static AlifSendResult gen_sendEx2(AlifGenObject* gen, AlifObject* arg,
 	gen->giFrameState = AlifFrameState_::Frame_Executing;
 	AlifObject* result = alifEval_evalFrame(thread, frame, exc);
 
+	/* إعادة excInfo إلى سابقه عند انتهاء المولد.
+	   الموضع الوحيد الذي كان يعيدها هو تعليمة YIELD_VALUE، وهي لا تُنفَّذ
+	   إذا انتهى المولد بإرجاع أو بخطأ بدل أن يُعلَّق. فتبقى excInfo مشيرة
+	   إلى giExcState داخل المولد، ثم يُحرَّر المولد فتصير مؤشراً معلقاً،
+	   فيقرأ أول خطأ يُرفع بعد ذلك ذاكرة محررة وينهار البرنامج.
+	   الشرط يمنع الاستعادة مرتين: عند التعليق تكون YIELD_VALUE أعادتها. */
+	if (thread->excInfo == &gen->giExcState) {
+		thread->excInfo = gen->giExcState.previousItem;
+		gen->giExcState.previousItem = nullptr;
+	}
+
 	if (result) {
 		if (FRAME_STATE_SUSPENDED(gen->giFrameState)) {
 			*presult = result;

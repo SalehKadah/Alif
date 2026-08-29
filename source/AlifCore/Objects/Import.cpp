@@ -1,6 +1,7 @@
 #include "alif.h"
 
 #include "AlifCore_Eval.h"
+#include "AlifCore_FileSuffix.h"
 #include "AlifCore_Import.h"
 #include "AlifCore_Interpreter.h"
 #include "AlifCore_State.h"
@@ -1879,6 +1880,43 @@ static AlifObject* load_module(const char*, FILE*, char*, AlifIntT, AlifObject*)
 
 #define S_ISDIR(x) (((x) & S_IFMT) == S_IFDIR)
 
+
+/* على ويندوز تفسّر stat و fopen مسارَ البايتات بترميز صفحة النظام (ANSI)
+   لا بترميز UTF-8، فلا تريان أي ملف باسم أو لاحقة عربية على نظام لغته ليست
+   العربية، ويفشل استيراد المكتبات دون سبب ظاهر. المسارات هنا نصوص UTF-8
+   ضيقة، لذا نحوّلها إلى نص عريض ونستعمل الدوال العريضة.
+   على غير ويندوز المسارات بايتات UTF-8 أصلاً فتُستعمل الدوال كما هي. */
+static AlifIntT path_stat(const char* _path, AlifIntT* _isDir) { //* alif
+#ifdef _WINDOWS
+	wchar_t wpath[MAXPATHLEN + 1]{};
+	if (MultiByteToWideChar(CP_UTF8, 0, _path, -1, wpath, MAXPATHLEN + 1) <= 0)
+		return 0;
+	DWORD attrs = GetFileAttributesW(wpath);
+	if (attrs == INVALID_FILE_ATTRIBUTES) return 0;
+	if (_isDir != nullptr) *_isDir = ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0);
+	return 1;
+#else
+	struct stat statbuf;
+	if (stat(_path, &statbuf) != 0) return 0;
+	if (_isDir != nullptr) *_isDir = S_ISDIR(statbuf.st_mode);
+	return 1;
+#endif
+}
+
+static FILE* path_fopen(const char* _path, const char* _mode) { //* alif
+#ifdef _WINDOWS
+	wchar_t wpath[MAXPATHLEN + 1]{};
+	wchar_t wmode[16]{};
+	if (MultiByteToWideChar(CP_UTF8, 0, _path, -1, wpath, MAXPATHLEN + 1) <= 0)
+		return nullptr;
+	if (MultiByteToWideChar(CP_UTF8, 0, _mode, -1, wmode, 16) <= 0)
+		return nullptr;
+	return _wfopen(wpath, wmode);
+#else
+	return fopen(_path, _mode);
+#endif
+}
+
 //* alif
 
 enum FileType { // 10
@@ -1906,14 +1944,37 @@ static AlifObject* extensions = nullptr; // 90
 FileDescr* _alifImportFileTab_ = nullptr; // 98
 
 
-static const FileDescr _alifImportStandardFileTab_[] = { // 107
-	{".aliflib", "U", ALIF_SOURCE},
+/* اللواحق التي يبحث عنها المستورد، بالترتيب.
+   العربية أولاً لأنها الأصل، ثم الإنجليزية للتوافق مع ما سبق.
+   اللاحقة .الف مقبولة أيضاً حتى يمكن استيراد أي برنامج كمكتبة. */
+static constexpr FileDescr _alifImportStandardFileTab_[] = { // 107
+	{ALIF_SUFFIX_LIB_AR, "U", ALIF_SOURCE},
+	{ALIF_SUFFIX_LIB_EN, "U", ALIF_SOURCE},
+	{ALIF_SUFFIX_SOURCE_AR, "U", ALIF_SOURCE},
+	{ALIF_SUFFIX_SOURCE_EN, "U", ALIF_SOURCE},
 #ifdef _WINDOWS
-	{".alifw", "U", ALIF_SOURCE},
+	{ALIF_SUFFIX_WINDOWED_AR, "U", ALIF_SOURCE},
+	{ALIF_SUFFIX_WINDOWED_EN, "U", ALIF_SOURCE},
 #endif
-	{".alifc", "rb", ALIF_COMPILED},
+	{ALIF_SUFFIX_COMPILED_AR, "rb", ALIF_COMPILED},
+	{ALIF_SUFFIX_COMPILED_EN, "rb", ALIF_COMPILED},
 	{0, 0}
 };
+
+/* أطول لاحقة في الجدول أعلاه، بالبايتات، تُحسب في وقت الترجمة.
+   يُحجز بها هامش المسار بدل رقم ثابت يُنسى تحديثه إذا أُضيفت لاحقة أطول.
+   العدّ يدوي لأن strlen ليست قابلة للتقييم في وقت الترجمة. */
+static constexpr AlifUSizeT max_suffixLen() { //* alif
+	AlifUSizeT max = 0;
+	for (const FileDescr* fdp = _alifImportStandardFileTab_;
+		fdp->suffix != nullptr; fdp++) {
+		AlifUSizeT len = 0;
+		while (fdp->suffix[len] != '\0') len++;
+		if (len > max) max = len;
+	}
+	return max;
+}
+static constexpr AlifUSizeT MAX_SUFFIX_LEN = max_suffixLen();
 
 
 static void init_importFileTab() { //* alif
@@ -2115,7 +2176,7 @@ static AlifObject* load_package(const char* name, char* pathname) { // 1035
 	if (err != 0)
 		goto error;
 	buf[0] = '\0';
-	fdp = find_module(name, "__تهيئة__", path, buf, sizeof(buf), &fp, nullptr);
+	fdp = find_module(name, ALIF_INITMODULE_NAME, path, buf, sizeof(buf), &fp, nullptr);
 	if (fdp == nullptr) {
 		if (alifErr_exceptionMatches(_alifExcImportError_)) {
 			alifErr_clear();
@@ -2148,8 +2209,6 @@ static FileDescr* find_module(const char* _fullname, const char* _subname, AlifO
 	FileDescr* fdp = nullptr;
 	const char* filemode{};
 	FILE* fp = nullptr;
-
-	struct stat statbuf {};
 
 	static FileDescr fd_builtin = { "", "", CPP_BUILTIN };
 	static FileDescr fd_package = { "", "", PKG_DIRECTORY };
@@ -2210,7 +2269,9 @@ static FileDescr* find_module(const char* _fullname, const char* _subname, AlifO
 			continue;
 
 		len = strlen(alifUStr_asUTF8(v));
-		if (len + 7 + namelen + 12 >= _buflen) {
+		/* المسار + فاصل + الاسم + أطول لاحقة + الصفر الختامي.
+		   الطول بالبايتات لا بالحروف، واللاحقة العربية حرفان لكل حرف */
+		if (len + 7 + namelen + MAX_SUFFIX_LEN >= _buflen) {
 			ALIF_XDECREF(copy);
 			continue; /* Too long */
 		}
@@ -2231,17 +2292,18 @@ static FileDescr* find_module(const char* _fullname, const char* _subname, AlifO
 		strcpy(_buf + len, name);
 		len += namelen;
 
-		if (stat(_buf, &statbuf) == 0 and         /* it exists */
-			S_ISDIR(statbuf.st_mode) and         /* it's a directory */
+		AlifIntT isDir = 0;
+		if (path_stat(_buf, &isDir) and           /* it exists */
+			isDir and                            /* it's a directory */
 			case_ok(_buf, len, namelen, name)) { /* case matches */
-			if (find_initModule(_buf)) { /* and has __تهيئة__.aliflib */
+			if (find_initModule(_buf)) { /* and has __تهيئة__.مكتبة */
 				ALIF_XDECREF(copy);
 				return &fd_package;
 			}
 			//else {
 			//	char warnstr[MAXPATHLEN + 80];
 			//	sprintf(warnstr, "Not importing directory "
-			//		"'%.*s': missing __تهيئة__.aliflib",
+			//		"'%.*s': missing __تهيئة__.مكتبة",
 			//		MAXPATHLEN, buf);
 			//	if (alifErr_warn(_alifExcImportWarning_,
 			//		warnstr)) {
@@ -2256,7 +2318,7 @@ static FileDescr* find_module(const char* _fullname, const char* _subname, AlifO
 			filemode = fdp->mode;
 			if (filemode[0] == 'U')
 				filemode = "r"; // "b";
-			fp = fopen(_buf, filemode);
+			fp = path_fopen(_buf, filemode);
 			if (fp != nullptr) {
 				break;
 			}
@@ -2285,16 +2347,20 @@ static AlifIntT case_ok(char* _buf, AlifSizeT _len, AlifSizeT _namelen, char* _n
 
 	 /* _WINDOWS */
 #if defined(_WINDOWS)
-	WIN32_FIND_DATA data;
+	WIN32_FIND_DATAW data{};
 	HANDLE h;
 
+	/* المسارات هنا UTF-8، و mbstowcs تقرؤها بترميز صفحة النظام فتفسد الأسماء
+	   واللواحق العربية على نظام لغته ليست العربية، لذا نحوّل بـ CP_UTF8.
+	   والمقارنة تامّة لا جزئية: _name هو اسم الملف كما يجب أن يكون على القرص
+	   (باللاحقة إن وُجدت)، فيُقارن كله ليتحقق تطابق حالة الأحرف. */
 	//* alif
-	wchar_t str[MAXPATHLEN]{};
-	AlifSizeT len = strlen(_buf);
-	mbstowcs(str, _buf, len);
+	wchar_t wbuf[MAXPATHLEN + 1]{};
+	if (MultiByteToWideChar(CP_UTF8, 0, _buf, -1, wbuf, MAXPATHLEN + 1) <= 0)
+		return 0;
 	//* alif
 
-	h = FindFirstFile(str, &data);
+	h = FindFirstFileW(wbuf, &data);
 	if (h == INVALID_HANDLE_VALUE) {
 		//alifErr_format(_alifExcNameError_,
 		//	"Can't find file for module %.100s\n(filename %.300s)",
@@ -2304,12 +2370,12 @@ static AlifIntT case_ok(char* _buf, AlifSizeT _len, AlifSizeT _namelen, char* _n
 	FindClose(h);
 
 	//* alif
-	wchar_t name[MAXPATHLEN]{};
-	AlifSizeT namelen = strlen(_name);
-	mbstowcs(name, _name, namelen);
+	wchar_t wname[MAXPATHLEN + 1]{};
+	if (MultiByteToWideChar(CP_UTF8, 0, _name, -1, wname, MAXPATHLEN + 1) <= 0)
+		return 0;
 	//* alif
 
-	return wcsncmp(data.cFileName, name, namelen) == 0;
+	return wcscmp(data.cFileName, wname) == 0;
 
 
 
@@ -2360,30 +2426,40 @@ static AlifIntT find_initModule(char* buf) { // 1715
 	const AlifUSizeT save_len = strlen(buf);
 	AlifUSizeT i = save_len;
 	char* pname{};  /* pointer to start of __تهيئة__ */
-	struct stat statbuf;
 
 	/*      For calling case_ok(buf, len, namelen, name):
-	 *      /a/b/c/d/e/f/g/h/i/j/k/some_long_module_name.aliflib\0
+	 *      /a/b/c/d/e/f/g/h/i/j/k/some_long_module_name.مكتبة\0
 	 *      ^                      ^                   ^    ^
 	 *      |--------------------- buf ---------------------|
 	 *      |------------------- len ------------------|
 	 *                             |------ name -------|
 	 *                             |----- namelen -----|
 	 */
-	if (save_len + 15 >= MAXPATHLEN)
+	/* الأطوال هنا بالبايتات لا بالحروف، لأن buf نص UTF-8 ضيق
+	   و "__تهيئة__" يشغل 14 بايت رغم أنه 9 حروف */
+	if (save_len + 1 + ALIF_INITMODULE_NAMELEN + MAX_SUFFIX_LEN + 1 >= MAXPATHLEN)
 		return 0;
 	buf[i++] = SEP;
 	pname = buf + i;
-	strcpy(pname, "__تهيئة__.aliflib");
-	if (stat(buf, &statbuf) == 0) {
+
+	/* يقبل __تهيئة__ بأي لاحقة مصدرية معتمدة - عربية كانت أو إنجليزية */
+	for (const FileDescr* fdp = _alifImportStandardFileTab_;
+		fdp->suffix != nullptr; fdp++) {
+		if (fdp->type != ALIF_SOURCE) continue;
+
+		strcpy(pname, ALIF_INITMODULE_NAME);
+		strcpy(pname + ALIF_INITMODULE_NAMELEN, fdp->suffix);
+		if (!path_stat(buf, nullptr)) continue;
+
 		if (case_ok(buf,
-			save_len + 9,               /* len("/__تهيئة__") */
-			8,                              /* len("__تهيئة__") */
+			save_len + 1 + ALIF_INITMODULE_NAMELEN, /* len("/__تهيئة__") */
+			ALIF_INITMODULE_NAMELEN,                /* len("__تهيئة__") */
 			pname)) {
 			buf[save_len] = '\0';
 			return 1;
 		}
 	}
+	buf[save_len] = '\0';
 	return 0;
 }
 

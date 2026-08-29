@@ -10,3 +10,8 @@ DerivedData
 *.eddx
 *.xopp
 *.DS_Store
+
+# مخرجات البناء والتشغيل
+linuxBuild/build
+examples/alif.exe
+examples/ملف_تجريبي.الف

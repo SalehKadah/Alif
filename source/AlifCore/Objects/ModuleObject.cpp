@@ -1,6 +1,7 @@
 #include "alif.h"
 
 #include "AlifCore_Dict.h"
+#include "AlifCore_FileSuffix.h"
 #include "AlifCore_Interpreter.h"
 #include "AlifCore_Import.h"
 #include "AlifCore_ModSupport.h"
@@ -627,7 +628,9 @@ AlifIntT _alifModule_isPossiblyShadowing(AlifObject* _origin) { // 870
 		return 0;
 	}
 
-	if (wcscmp(sep_ + 1, L"__init__.alif") == 0) {
+	/* ملف تهيئة الحزمة هو __تهيئة__ بأي لاحقة معتمدة (.الف، .مكتبة، ...)،
+	   لذا نطابق البادئة فقط لا الاسم الكامل */
+	if (wcsncmp(sep_ + 1, ALIF_WINITMODULE_PREFIX, ALIF_WINITMODULE_PREFIXLEN) == 0) {
 		*sep_ = L'\0';
 		sep_ = wcsrchr(root, SEP);
 		if (sep_ == nullptr) {
