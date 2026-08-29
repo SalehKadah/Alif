@@ -1,0 +1,129 @@
+name: إصدار ألف
+
+# ينشئ حزماً جاهزة للتشغيل للأنظمة الثلاثة ويرفعها إلى إصدار على GitHub.
+# يعمل عند دفع وسم يبدأ بـ v، أو يدوياً بتمرير اسم الوسم.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "وسم الإصدار، مثل v5.2.0-ar"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: بناء
+        run: msbuild /m /p:Configuration=Release /p:Platform=x64 winBuild/Alif.sln
+
+      - name: تجميع الحزمة
+        shell: pwsh
+        run: |
+          $out = "alif-windows-x64"
+          New-Item -ItemType Directory -Path $out | Out-Null
+          Copy-Item "winBuild\x64\Release\alif.exe" $out
+          Copy-Item -Recurse library $out
+          Copy-Item -Recurse examples $out
+          Remove-Item -Force "$out\examples\alif.exe" -ErrorAction SilentlyContinue
+          Copy-Item ".github\release\اقرأني.md" $out
+
+          # مكتبات وقت تشغيل ++C بجانب البرنامج، ليعمل على جهاز لم يُنصَّب
+          # عليه Visual Studio ولا حزمة إعادة التوزيع
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
+                    Sort-Object Name | Select-Object -Last 1
+          if (-not $redist) { throw "لم يُعثر على مكتبات وقت تشغيل ++C" }
+          Copy-Item "$($redist.FullName)\*.dll" $out
+
+      - name: تجربة الحزمة
+        shell: bash
+        run: |
+          cd alif-windows-x64
+          printf '20\n' | ./alif.exe "examples/PrimeNumbers.الف"
+          printf 'اطبع("سليم")\n' > "ت.الف" && ./alif.exe "ت.الف"
+          rm -f "ت.الف" "examples/ملف_تجريبي.الف"
+
+      - name: ضغط
+        shell: pwsh
+        run: Compress-Archive -Path alif-windows-x64 -DestinationPath alif-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alif-windows-x64
+          path: alif-windows-x64.zip
+
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: alif-linux-x64
+          - os: macos-latest
+            name: alif-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: بناء
+        run: cd linuxBuild && make release
+
+      - name: تجميع الحزمة
+        run: |
+          out="${{ matrix.name }}"
+          mkdir -p "$out"
+          cp linuxBuild/build/alif "$out/"
+          chmod +x "$out/alif"
+          cp -r library examples "$out/"
+          rm -f "$out/examples/alif.exe"
+          cp ".github/release/اقرأني.md" "$out/"
+
+      - name: تجربة الحزمة
+        run: |
+          cd "${{ matrix.name }}"
+          printf '20\n' | ./alif "examples/PrimeNumbers.الف"
+          printf 'اطبع("سليم")\n' > "ت.الف" && ./alif "ت.الف"
+          rm -f "ت.الف" "examples/ملف_تجريبي.الف"
+
+      - name: ضغط
+        run: tar czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  release:
+    needs: [windows, unix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: إنشاء الإصدار
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -lh dist
+          gh release create "$TAG" dist/* -R "$GITHUB_REPOSITORY" -t "لغة ألف - $TAG" -F .github/release/ملاحظات_الإصدار.md
