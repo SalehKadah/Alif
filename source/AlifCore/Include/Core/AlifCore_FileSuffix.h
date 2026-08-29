@@ -51,8 +51,15 @@
 
 /* "__تهيئة__" */
 #define ALIF_INITMODULE_NAME		"__\xD8\xAA\xD9\x87\xD9\x8A\xD8\xA6\xD8\xA9__"
-#define ALIF_INITMODULE_NAMELEN		14	/* عدد البايتات - لا الحروف */
+/* الطول بالبايتات لا بالحروف: "__تهيئة__" تسعة حروف وأربعة عشر بايتاً.
+   يُحسب من النص نفسه، فلا يحتاج تحديثاً إذا تغيّر اسم ملف التهيئة.
+   sizeof تشمل الصفر الختامي فنطرحه. لا تصلح strlen هنا لأن القيمة
+   تُستعمل في سياقات تتطلب ثابتاً في وقت الترجمة. */
+#define ALIF_INITMODULE_NAMELEN		(sizeof(ALIF_INITMODULE_NAME) - 1)
 
 /* "__تهيئة__." - للمطابقة العريضة مع أي لاحقة */
 #define ALIF_WINITMODULE_PREFIX		L"__\u062A\u0647\u064A\u0626\u0629__."
-#define ALIF_WINITMODULE_PREFIXLEN	10	/* عدد الحروف: 9 + النقطة */
+/* الطول بالحروف العريضة لا بالبايتات، لأن المقارنة تجري بـ wcsncmp.
+   القسمة على sizeof(wchar_t) تضبط الحالتين: حرفان لكل محرف على
+   ويندوز وأربعة على غيره. يُحسب من النص نفسه كسابقه. */
+#define ALIF_WINITMODULE_PREFIXLEN	(sizeof(ALIF_WINITMODULE_PREFIX) / sizeof(wchar_t) - 1)
