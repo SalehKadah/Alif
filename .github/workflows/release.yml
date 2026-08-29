@@ -73,13 +73,12 @@ jobs:
         include:
           - os: ubuntu-latest
             name: alif-linux-x64
-          # macos-latest عدّاء Apple Silicon، وثنائياته لا تعمل على إنتل
-          # إطلاقاً (Rosetta تترجم إنتل على ARM لا العكس)، فنبني الاثنين.
-          # macos-13 آخر عدّاء إنتل مستضاف لدى GitHub.
+          # عدّاءات ماك المستضافة كلها Apple Silicon بعد سحب macos-13،
+          # وثنائي ARM لا يعمل على إنتل إطلاقاً (Rosetta تترجم إنتل على ARM
+          # لا العكس). فنبني ثنائياً شاملاً (arm64 + x86_64) يعمل عليهما معاً.
           - os: macos-latest
-            name: alif-macos-arm64
-          - os: macos-13
-            name: alif-macos-x64
+            name: alif-macos-universal
+            make_args: CPP='c++ -arch arm64 -arch x86_64'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +86,14 @@ jobs:
           submodules: true
 
       - name: بناء
-        run: cd linuxBuild && make release
+        run: cd linuxBuild && make release ${{ matrix.make_args }}
+
+      - name: التحقق من معماريات الثنائي
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          lipo -archs linuxBuild/build/alif
+          lipo -archs linuxBuild/build/alif | grep -q x86_64
+          lipo -archs linuxBuild/build/alif | grep -q arm64
 
       - name: تجميع الحزمة
         run: |
