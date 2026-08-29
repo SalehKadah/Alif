@@ -73,8 +73,13 @@ jobs:
         include:
           - os: ubuntu-latest
             name: alif-linux-x64
+          # macos-latest عدّاء Apple Silicon، وثنائياته لا تعمل على إنتل
+          # إطلاقاً (Rosetta تترجم إنتل على ARM لا العكس)، فنبني الاثنين.
+          # macos-13 آخر عدّاء إنتل مستضاف لدى GitHub.
           - os: macos-latest
             name: alif-macos-arm64
+          - os: macos-13
+            name: alif-macos-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
