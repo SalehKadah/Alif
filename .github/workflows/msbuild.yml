@@ -31,11 +31,13 @@ jobs:
         shell: bash
         run: |
           set +e
+          MSB=$(find "/c/Program Files/Microsoft Visual Studio" -name MSBuild.exe -path "*Current/Bin*" -print 2>/dev/null | grep -v amd64 | head -1)
+          echo "msbuild: $MSB"
           EX="examples/BallFallSim.alif"
           for CFG in Debug Release; do
             for PLAT in Win32 x64; do
               echo "############ $CFG|$PLAT"
-              msbuild /m /p:Configuration=$CFG /p:Platform=$PLAT winBuild/Alif.sln > b.log 2>&1
+              "$MSB" /m /p:Configuration=$CFG /p:Platform=$PLAT winBuild/Alif.sln > b.log 2>&1
               echo "بناء rc=$?"
               tail -4 b.log
               EXE=$(ls winBuild/*/$CFG/alif.exe winBuild/$CFG/alif.exe 2>/dev/null | head -1)
