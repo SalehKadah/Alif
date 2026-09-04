@@ -30,32 +30,27 @@ jobs:
       - name: Build
         run: msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
 
-      - name: فحص GetPath
+      - name: فحص مواضع التشغيل
         shell: bash
         run: |
-          set -x
-          H=source/AlifCore/Include/Main/FrozenModules/GetPath.h
-          echo "=== 1. حالة الشجرة بعد البناء"
-          git status --porcelain
-          echo "=== 2. هل تغير GetPath.h"
-          git diff --stat -- "$H"
-          echo "=== 3. حجم المولد مقابل المودع"
-          wc -c "$H"
-          git show HEAD:"$H" | wc -c
-          echo "=== 4. أول 60 سطر فرق"
-          git diff -- "$H" | head -60
-          echo "=== 5. تشغيل المبني كما هو"
-          EXE="winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
-          ls -l "$EXE" || true
-          P=$(mktemp -d); cp "$EXE" "$P/"; cp -r library examples "$P/"
-          printf 'اطبع("سليم")\n' > "$P/t.alif"
-          ( cd "$P" && ./alif.exe t.alif; echo "rc=$?" )
-          echo "=== 6. استرجاع GetPath.h المودع واعادة بناء alif وحده"
-          git checkout -- "$H"
-          msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 /t:Alif winBuild/Alif.sln
-          echo "=== 7. هل اعيد توليده مرة اخرى"
-          git status --porcelain -- "$H"
-          echo "=== 8. تشغيل بعد الاسترجاع"
-          P2=$(mktemp -d); cp "$EXE" "$P2/"; cp -r library examples "$P2/"
-          printf 'اطبع("سليم")\n' > "$P2/t.alif"
-          ( cd "$P2" && ./alif.exe t.alif; echo "rc=$?" )
+          set +e
+          EXE="winBuild/x64/Release/alif.exe"
+          EX=$(git -c core.quotepath=false ls-files 'examples/*.alif' | head -1)
+          echo "### المثال: $EX"
+          try() {
+            echo "----- $1"
+            shift
+            ( "$@" ) > o.txt 2> e.txt
+            echo "rc=$?"
+            echo "[out] $(wc -c < o.txt) بايت"; head -20 o.txt
+            echo "[err] $(wc -c < e.txt) بايت"; head -20 e.txt
+          }
+          try "1. من جذر المستودع، مفسر مجلد البناء" ./$EXE "$EX"
+          try "2. النسخة التي وضعها البناء في examples" ./examples/alif.exe "$EX"
+          try "3. من داخل examples" bash -c 'cd examples && ./alif.exe "$(ls *.alif | head -1)"'
+          try "4. بلا وسائط" ./$EXE
+          try "5. حزمة مجهزة جانبها library" bash -c 'P=$(mktemp -d); cp winBuild/x64/Release/alif.exe "$P/"; cp -r library "$P/"; printf %s "اطبع(1)" > "$P/t.alif"; cd "$P" && ./alif.exe t.alif'
+          echo "----- 6. اعتماديات الملف التنفيذي"
+          dumpbin //dependents "$EXE" 2>&1 | head -30
+          echo "----- 7. ما وضعه البناء في examples"
+          ls -l examples/*.exe examples/*.dll 2>/dev/null
