@@ -37,7 +37,7 @@ jobs:
           for CFG in Debug Release; do
             for PLAT in Win32 x64; do
               echo "############ $CFG|$PLAT"
-              "$MSB" /m /p:Configuration=$CFG /p:Platform=$PLAT winBuild/Alif.sln > b.log 2>&1
+              MSYS_NO_PATHCONV=1 "$MSB" -m -p:Configuration=$CFG -p:Platform=$PLAT winBuild/Alif.sln > b.log 2>&1
               echo "بناء rc=$?"
               tail -4 b.log
               EXE=$(ls winBuild/*/$CFG/alif.exe winBuild/$CFG/alif.exe 2>/dev/null | head -1)
@@ -46,6 +46,5 @@ jobs:
                 ( ./$EXE ) > o.txt 2> e.txt; echo "بلا وسائط rc=$?"; echo "[out]"; head -6 o.txt; echo "[err]"; head -6 e.txt
                 ( ./$EXE "$EX" ) > o.txt 2> e.txt; echo "بمثال rc=$?"; echo "[out]"; head -6 o.txt; echo "[err]"; head -6 e.txt
               fi
-              git clean -xdq -e b.log -e o.txt -e e.txt winBuild 2>/dev/null
             done
           done
