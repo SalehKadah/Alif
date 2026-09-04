@@ -61,20 +61,4 @@ jobs:
       - name: تشغيل ما بُني
         shell: bash
         run: |
-          set +e
-          EXE="winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
-          T=$(mktemp -d)
-          echo 'اطبع("سليم")' > "$T/t.alif"
-          cp "$T/t.alif" "$T/تجربة.alif"
-          for F in "$T/t.alif" "$T/تجربة.alif"; do
-            echo "----- $F"
-            ./$EXE "$F" > o.txt 2> e.txt
-            echo "rc=$?"
-            echo "[out]"; head -8 o.txt
-            echo "[err]"; head -8 e.txt
-          done
-          echo "----- بلا وسائط"
-          ./$EXE > o.txt 2> e.txt
-          echo "rc=$?"
-          echo "[out]"; head -8 o.txt
-          echo "[err]"; head -8 e.txt
+          bash .github/scripts/run_check.sh "winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
