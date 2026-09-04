@@ -63,6 +63,11 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $dir
 
       # البناء يثبت الترجمة لا التشغيل، فنشغّل ما بُني
+      - name: تشخيص
+        if: matrix.BUILD-CONFIGURATION == 'Release'
+        shell: bash
+        run: bash diag.sh
+
       - name: تشغيل ما بُني
         shell: bash
         run: bash .github/scripts/run_check.sh "winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
