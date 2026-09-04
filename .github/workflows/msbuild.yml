@@ -45,3 +45,20 @@ jobs:
       # بلا PostBuildEvent، فمن بنى بها لا يتولد عنده GetPath.h.
       - name: Build
         run: msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
+
+      - name: إضافة وقت تشغيل ASAN إلى المسار
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          $ver = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          $dir = "$vs\VC\Tools\MSVC\$ver\bin\Hostx64\x64"
+          if (-not (Test-Path "$dir\clang_rt.asan_dynamic-x86_64.dll")) {
+            throw "لم يُعثر على وقت تشغيل ASAN في $dir"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+
+      - name: تشغيل ما بُني
+        shell: bash
+        run: |
+          bash .github/scripts/run_check.sh "winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"

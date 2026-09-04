@@ -1879,6 +1879,25 @@ static AlifObject* load_module(const char*, FILE*, char*, AlifIntT, AlifObject*)
 
 #define S_ISDIR(x) (((x) & S_IFMT) == S_IFDIR)
 
+
+/* على ويندوز تفسّر fopen مسارَ البايتات بترميز صفحة النظام (ANSI) لا UTF-8،
+   فلا ترى ملفاً باسم عربي على نظام صفحته ليست 65001. ومكتبة الإقلاع
+   library/نظام_التشغيل.aliflib اسمها عربي، فيموت الإقلاع صامتاً.
+   المسار هنا نص UTF-8 ضيق، فنحوّله إلى عريض ونفتح بالدالة العريضة. */
+static FILE* path_fopen(const char* _path, const char* _mode) { //* alif
+#ifdef _WINDOWS
+	wchar_t wpath[MAXPATHLEN + 1]{};
+	wchar_t wmode[16]{};
+	if (MultiByteToWideChar(CP_UTF8, 0, _path, -1, wpath, MAXPATHLEN + 1) <= 0)
+		return nullptr;
+	if (MultiByteToWideChar(CP_UTF8, 0, _mode, -1, wmode, 16) <= 0)
+		return nullptr;
+	return _wfopen(wpath, wmode);
+#else
+	return fopen(_path, _mode);
+#endif
+}
+
 //* alif
 
 enum FileType { // 10
@@ -2256,7 +2275,7 @@ static FileDescr* find_module(const char* _fullname, const char* _subname, AlifO
 			filemode = fdp->mode;
 			if (filemode[0] == 'U')
 				filemode = "r"; // "b";
-			fp = fopen(_buf, filemode);
+			fp = path_fopen(_buf, filemode);
 			if (fp != nullptr) {
 				break;
 			}
