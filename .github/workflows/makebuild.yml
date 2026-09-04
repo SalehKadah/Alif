@@ -21,6 +21,10 @@ jobs:
       #   run: ./configure
       - name: make
         run: cd linuxBuild && make ${{matrix.BUILD-CONFIGURATION}}
+
+      # البناء يثبت الترجمة لا التشغيل، فنشغّل ما بُني
+      - name: تشغيل ما بُني
+        run: bash .github/scripts/run_check.sh linuxBuild/build/alif
     # - name: make check
     #   run: make check
     # - name: make distcheck
@@ -41,3 +45,7 @@ jobs:
 
       - name: make
         run: cd linuxBuild && make ${{matrix.BUILD-CONFIGURATION}}
+
+      # البناء يثبت الترجمة لا التشغيل، فنشغّل ما بُني
+      - name: تشغيل ما بُني
+        run: bash .github/scripts/run_check.sh linuxBuild/build/alif
