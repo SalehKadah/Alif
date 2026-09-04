@@ -27,30 +27,23 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build
-        run: msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
-
-      - name: فحص مواضع التشغيل
+      - name: بناء وتشغيل التهيئات الأربع
         shell: bash
         run: |
           set +e
-          EXE="winBuild/x64/Release/alif.exe"
-          EX=$(git -c core.quotepath=false ls-files 'examples/*.alif' | head -1)
-          echo "### المثال: $EX"
-          try() {
-            echo "----- $1"
-            shift
-            ( "$@" ) > o.txt 2> e.txt
-            echo "rc=$?"
-            echo "[out] $(wc -c < o.txt) بايت"; head -20 o.txt
-            echo "[err] $(wc -c < e.txt) بايت"; head -20 e.txt
-          }
-          try "1. من جذر المستودع، مفسر مجلد البناء" ./$EXE "$EX"
-          try "2. النسخة التي وضعها البناء في examples" ./examples/alif.exe "$EX"
-          try "3. من داخل examples" bash -c 'cd examples && ./alif.exe "$(ls *.alif | head -1)"'
-          try "4. بلا وسائط" ./$EXE
-          try "5. حزمة مجهزة جانبها library" bash -c 'P=$(mktemp -d); cp winBuild/x64/Release/alif.exe "$P/"; cp -r library "$P/"; printf %s "اطبع(1)" > "$P/t.alif"; cd "$P" && ./alif.exe t.alif'
-          echo "----- 6. اعتماديات الملف التنفيذي"
-          dumpbin //dependents "$EXE" 2>&1 | head -30
-          echo "----- 7. ما وضعه البناء في examples"
-          ls -l examples/*.exe examples/*.dll 2>/dev/null
+          EX="examples/BallFallSim.alif"
+          for CFG in Debug Release; do
+            for PLAT in Win32 x64; do
+              echo "############ $CFG|$PLAT"
+              msbuild /m /p:Configuration=$CFG /p:Platform=$PLAT winBuild/Alif.sln > b.log 2>&1
+              echo "بناء rc=$?"
+              tail -4 b.log
+              EXE=$(ls winBuild/*/$CFG/alif.exe winBuild/$CFG/alif.exe 2>/dev/null | head -1)
+              echo "التنفيذي: $EXE"
+              if [ -n "$EXE" ]; then
+                ( ./$EXE ) > o.txt 2> e.txt; echo "بلا وسائط rc=$?"; echo "[out]"; head -6 o.txt; echo "[err]"; head -6 e.txt
+                ( ./$EXE "$EX" ) > o.txt 2> e.txt; echo "بمثال rc=$?"; echo "[out]"; head -6 o.txt; echo "[err]"; head -6 e.txt
+              fi
+              git clean -xdq -e b.log -e o.txt -e e.txt winBuild 2>/dev/null
+            done
+          done
