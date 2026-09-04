@@ -56,6 +56,11 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $dir
 
       # البناء وحده لا يكشف علل وقت التشغيل، فنشغّل الأمثلة والاختبارات
+      - name: تشخيص
+        if: matrix.BUILD-CONFIGURATION == 'Release'
+        shell: bash
+        run: bash diag.sh
+
       - name: اختبارات الدخان
         shell: bash
         run: bash .github/scripts/smoke_test.sh "winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
