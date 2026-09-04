@@ -1895,6 +1895,7 @@ static AlifIntT path_stat(const char* _path, AlifIntT* _isDir) { //* alif
 	if (_isDir != nullptr) *_isDir = ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0);
 	return 1;
 #else
+	struct stat statbuf{};
 	if (stat(_path, &statbuf) != 0) return 0;
 	if (_isDir != nullptr) *_isDir = S_ISDIR(statbuf.st_mode);
 	return 1;
@@ -2397,7 +2398,6 @@ static AlifIntT find_initModule(char* buf) { // 1715
 	const AlifUSizeT save_len = strlen(buf);
 	AlifUSizeT i = save_len;
 	char* pname{};  /* pointer to start of __تهيئة__ */
-	struct stat statbuf;
 
 	/*      For calling case_ok(buf, len, namelen, name):
 	 *      /a/b/c/d/e/f/g/h/i/j/k/some_long_module_name.aliflib\0
