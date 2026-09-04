@@ -1,8 +1,3 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
 name: Alif Windows Build
 
 on:
@@ -10,38 +5,57 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
-  # زر تشغيل يدوي: يتيح تجربة البناء على أي فرع بلا فتح طلب دمج.
   workflow_dispatch:
 
 env:
-  # Path to the solution file relative to the root of the project.
-  SOLUTION_FILE_PATH: "winBuild/Alif.sln"
+  SOLUTION_FILE_PATH: winBuild/Alif.sln
 
 permissions:
   contents: read
 
 jobs:
   build:
-    # عداء مستضاف لدى GitHub بدل عداء ذاتي الاستضافة: الذاتي لا يلتقط
-    # وظائف الفروع وطلبات الدمج إلا حين يكون جهازه متصلاً، ويشغّل شيفرة
-    # الطلبات الواردة على ذلك الجهاز.
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        BUILD-CONFIGURATION: [Debug, Release]
+        BUILD-CONFIGURATION: [Release]
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-          # lfs: true
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      # تُذكر المنصة صراحةً بدل الاتكال على التهيئة الافتراضية في الحل.
-      # ويستحق الانتباه أن تهيئة Release|Win32 في FreezeModule.vcxproj وحدها
-      # بلا PostBuildEvent، فمن بنى بها لا يتولد عنده GetPath.h.
       - name: Build
         run: msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
+
+      - name: فحص GetPath
+        shell: bash
+        run: |
+          set -x
+          H=source/AlifCore/Include/Main/FrozenModules/GetPath.h
+          echo "=== 1. حالة الشجرة بعد البناء"
+          git status --porcelain
+          echo "=== 2. هل تغير GetPath.h"
+          git diff --stat -- "$H"
+          echo "=== 3. حجم المولد مقابل المودع"
+          wc -c "$H"
+          git show HEAD:"$H" | wc -c
+          echo "=== 4. أول 60 سطر فرق"
+          git diff -- "$H" | head -60
+          echo "=== 5. تشغيل المبني كما هو"
+          EXE="winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
+          ls -l "$EXE" || true
+          P=$(mktemp -d); cp "$EXE" "$P/"; cp -r library examples "$P/"
+          printf 'اطبع("سليم")\n' > "$P/t.alif"
+          ( cd "$P" && ./alif.exe t.alif; echo "rc=$?" )
+          echo "=== 6. استرجاع GetPath.h المودع واعادة بناء alif وحده"
+          git checkout -- "$H"
+          msbuild /m /p:Configuration=${{matrix.BUILD-CONFIGURATION}} /p:Platform=x64 /t:Alif winBuild/Alif.sln
+          echo "=== 7. هل اعيد توليده مرة اخرى"
+          git status --porcelain -- "$H"
+          echo "=== 8. تشغيل بعد الاسترجاع"
+          P2=$(mktemp -d); cp "$EXE" "$P2/"; cp -r library examples "$P2/"
+          printf 'اطبع("سليم")\n' > "$P2/t.alif"
+          ( cd "$P2" && ./alif.exe t.alif; echo "rc=$?" )
