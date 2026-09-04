@@ -51,9 +51,18 @@ jobs:
         run: |
           set +e
           EXE="winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
-          try() { echo "----- $1"; shift; ( "$@" ) > o.txt 2> e.txt; echo "rc=$?"; echo "[out]"; head -8 o.txt; echo "[err]"; head -8 e.txt; }
-          T=$(mktemp -d); printf 'اطبع("سليم")
-' > "$T/t.alif"
-          try "1. برنامج صغير" ./$EXE "$T/t.alif"
-          try "2. بلا وسائط" ./$EXE
-          try "3. ملف عربي الاسم" bash -c 'T=$(mktemp -d); printf %s "اطبع(\"سليم\")" > "$T/تجربة.alif"; winBuild/x64/'"${{matrix.BUILD-CONFIGURATION}}"'/alif.exe "$T/تجربة.alif"'
+          T=$(mktemp -d)
+          echo 'اطبع("سليم")' > "$T/t.alif"
+          cp "$T/t.alif" "$T/تجربة.alif"
+          for F in "$T/t.alif" "$T/تجربة.alif"; do
+            echo "----- $F"
+            ./$EXE "$F" > o.txt 2> e.txt
+            echo "rc=$?"
+            echo "[out]"; head -8 o.txt
+            echo "[err]"; head -8 e.txt
+          done
+          echo "----- بلا وسائط"
+          ./$EXE > o.txt 2> e.txt
+          echo "rc=$?"
+          echo "[out]"; head -8 o.txt
+          echo "[err]"; head -8 e.txt
