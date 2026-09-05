@@ -368,6 +368,9 @@
     <ClCompile Include="..\source\AlifCore\Objects\WeakRefObject.cpp" />
     <ClCompile Include="..\source\AlifCore\Objects\WinConsoleIO.cpp" />
     <ClCompile Include="..\source\Modules\MathModule.cpp" />
+    <ClCompile Include="..\source\Modules\GraphicsModule.cpp" />
+    <ClCompile Include="..\source\Modules\Graphics\core\src\*.cpp" />
+    <ClCompile Include="..\source\Modules\Graphics\desktop\src\*.cpp" />
     <ClCompile Include="..\source\Modules\SignalModule.cpp" />
     <ClCompile Include="..\source\Modules\TimeModule.cpp" />
     <ClCompile Include="..\source\Modules\_abc.cpp" />
@@ -459,10 +462,10 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SAD_UI_USE_SDL2;SAD_UI_HAS_SDL_TTF;WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <ProgramDataBaseFileName>$(IntDir)vc$(TargetName)$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
-      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows;..\source\Modules\Graphics\core\include;..\source\Modules\Graphics\desktop\include;..\source\Modules\Graphics;..\third_party\SDL2\include;..\third_party\SDL2_ttf\include</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -481,10 +484,10 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SAD_UI_USE_SDL2;SAD_UI_HAS_SDL_TTF;WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <ProgramDataBaseFileName>$(IntDir)vc$(TargetName)$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
-      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows;..\source\Modules\Graphics\core\include;..\source\Modules\Graphics\desktop\include;..\source\Modules\Graphics;..\third_party\SDL2\include;..\third_party\SDL2_ttf\include</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -503,11 +506,11 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SAD_UI_USE_SDL2;SAD_UI_HAS_SDL_TTF;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows;..\source\Modules\Graphics\core\include;..\source\Modules\Graphics\desktop\include;..\source\Modules\Graphics;..\third_party\SDL2\include;..\third_party\SDL2_ttf\include</AdditionalIncludeDirectories>
       <ProgramDataBaseFileName>$(IntDir)vc$(TargetName)$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
@@ -526,11 +529,11 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SAD_UI_USE_SDL2;SAD_UI_HAS_SDL_TTF;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\source\Alif;..\source\AlifCore\Include\Core;..\source\AlifCore\Include\Main;..\source\AlifCore\Include\Main\Atomics;..\source\AlifCore\Include\Main\StringLib;..\source\AlifCore\Include\Main\mimalloc;..\source\AlifCore\Include\Main\mimalloc\mimalloc;..\source\AlifCore\Objects\mimalloc;..\source\Modules\_io;..\source\Modules\_io\clinic;..\source\Windows;..\source\Modules\Graphics\core\include;..\source\Modules\Graphics\desktop\include;..\source\Modules\Graphics;..\third_party\SDL2\include;..\third_party\SDL2_ttf\include</AdditionalIncludeDirectories>
       <ProgramDataBaseFileName>$(IntDir)vc$(TargetName)$(PlatformToolsetVersion).pdb</ProgramDataBaseFileName>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
