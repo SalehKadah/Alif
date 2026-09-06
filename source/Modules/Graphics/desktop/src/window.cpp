@@ -359,6 +359,7 @@ namespace sad
                 touchProcessor_.reset(); // (AR) FingerState.dragNode مؤشّر خام كذلك
                 contentRoot_ = std::move(root);
                 needsRedraw_ = true;
+                needsRelayout_ = true;
 
                 // (AR) تعيين معرّف ثابت للعقدة الجذر — لدعم تحريك الخروج في Page Transitions
                 if (contentRoot_ && contentRoot_->getId().empty())
@@ -410,6 +411,7 @@ namespace sad
                 }
 
                 needsRedraw_ = true;
+                needsRelayout_ = true;
             }
 
             // ═══════════════════════════════════════════════════════════════════
@@ -981,7 +983,17 @@ namespace sad
                     // 3. تحديث التخطيط إذا لزم الأمر
                     if (needsRedraw_)
                     {
-                        updateLayout();
+                        // (AR) [محراب] التحريكُ ووميضُ المؤشّر يغيّران المظهرَ
+                        //      لا الأبعاد. فلا نُعيد التخطيطَ إلّا حين تتغيّر
+                        //      البنيةُ فعلاً — وإلّا كان تخطيطُ الشجرةِ كاملاً
+                        //      يجري ٦٠ مرّةً في الثانية بلا داعٍ، ومعه
+                        //      `initializeAnimations` التي تُصفّر التحريكَ نفسَه.
+                        if (needsRelayout_)
+                        {
+                            updateLayout();
+                            needsRelayout_ = false;
+                        }
+                        needsRedraw_ = false;
                         // 4. رسم الإطار فقط عند الحاجة
                         renderFrame();
                     }
@@ -1258,6 +1270,7 @@ namespace sad
                         {
                             width_ = event.window.data1;
                             height_ = event.window.data2;
+                            needsRelayout_ = true; // [محراب] تغيّرُ الأبعاد يوجب تخطيطاً
                             layoutEngine_->setViewportSize(
                                 static_cast<float>(width_),
                                 static_cast<float>(height_));
@@ -1642,7 +1655,8 @@ namespace sad
 
                 if (needsRedraw_)
                 {
-                    updateLayout();
+                    if (needsRelayout_) { updateLayout(); needsRelayout_ = false; }
+                    needsRedraw_ = false;
                     renderFrame();
                 }
 

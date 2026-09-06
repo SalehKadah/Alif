@@ -408,6 +408,12 @@ namespace sad
                 std::unique_ptr<LayoutEngine> layoutEngine_; ///< محرك التخطيط
 
                 std::shared_ptr<IRNode> contentRoot_;        ///< جذر المحتوى
+
+                /// (AR) [محراب] هل يلزم إعادةُ تخطيطٍ لا إعادةُ رسمٍ فقط؟
+                ///      كان `needsRedraw_` يخلط الأمرَين، فإطارُ تحريكٍ واحدٌ
+                ///      يستدعي `updateLayout()` — تخطيطاً كاملاً للشجرة مع
+                ///      `initializeAnimations` — ستّين مرّةً في الثانية.
+                bool needsRelayout_ = true;
                 std::shared_ptr<LayoutResult> layoutResult_; ///< نتائج التخطيط
                 std::shared_ptr<StateStore> stateStore_;     ///< مخزن الحالة
 
