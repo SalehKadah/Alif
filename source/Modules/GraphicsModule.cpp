@@ -32,6 +32,19 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <algorithm>
+
+/* قياسُ الذاكرة المقيمة — لكلّ منصّةٍ بابُها */
+#if defined(_WIN32)
+#  include <windows.h>
+#  include <psapi.h>
+#  pragma comment(lib, "psapi.lib")
+#elif defined(__APPLE__)
+#  include <mach/mach.h>
+#else
+#  include <unistd.h>
+#  include <cstdio>
+#endif
 
 using sad::ui::IRNode;
 using sad::ui::UINodeType;
@@ -112,7 +125,16 @@ static NodePtr nodeOf(AlifObject* _module, AlifObject* _obj, const char* _where)
    المعالِجُ كائنُ ألفٍ قابلٌ للنداء. نحفظ مرجعاً له مفتاحُه نصٌّ، ونضع
    المفتاحَ في `IREvent::expression`، فتبقى شجرةُ IR جاهلةً بألفَ تماماً. */
 
-static std::unordered_map<std::string, AlifObject*> _graphicsHandlers_{};
+/* المعالِجُ قد يحمل وسيطاً مقيَّداً: `ألسنة` و`تقويم` تُسجّلان معالِجاً
+   واحداً لعدّةِ عناصر، وكلُّ عنصرٍ يُمرّر رقمَه (فهرسَ اللسان أو اليوم).
+   بلا هذا يلزم المستعملَ أن يكتب دالّةً لكلّ لسان. */
+class HandlerEntry {
+public:
+	AlifObject* fn{};    /* مرجعٌ قويّ */
+	AlifObject* arg{};   /* مرجعٌ قويّ، أو nullptr فلا وسيط */
+};
+
+static std::unordered_map<std::string, HandlerEntry> _graphicsHandlers_{};
 static unsigned long long _graphicsHandlerSeq_ = 0;
 
 /* حلقةُ SDL واحدةٌ على الخيط، وسجلُّ المعالِجات واحد. فتعشيشُ `تشغيل_تطبيق`
@@ -135,14 +157,50 @@ static void pruneHandlers(const NodePtr& _live) {
 	collectLiveKeys(_live, alive);
 	for (auto it = _graphicsHandlers_.begin(); it != _graphicsHandlers_.end();) {
 		if (alive.find(it->first) == alive.end()) {
-			ALIF_XDECREF(it->second);
+			ALIF_XDECREF(it->second.fn);
+			ALIF_XDECREF(it->second.arg);
 			it = _graphicsHandlers_.erase(it);
 		} else ++it;
 	}
 }
 
+/* ينادي المعالِجَ بالوسيطِ الملائم. أولويّةُ الوسيطِ المقيَّد على قيمةِ
+   الحدث: الأوّلُ من صنعِنا ونعرف معناه، والثانيةُ من الودجة. */
+static AlifObject* invokeHandler(const HandlerEntry& _e, const std::string& _changeValue) {
+	AlifObject* handler = ALIF_NEWREF(_e.fn);
+	AlifObject* result = nullptr;
+	if (_e.arg != nullptr) {
+		/* الوسيطُ المقيَّدُ من صنعِنا ونعرف معناه، فمعالِجٌ لا يقبله خطأٌ
+		   يُبلَّغ لا يُبتلَع. ولا نُعيد النداءَ بلا وسيطٍ هنا: ذلك يترك
+		   استثناءً معلّقاً ثمّ ينادي فوقَه. */
+		result = alifObject_callOneArg(handler, _e.arg);
+		ALIF_DECREF(handler);
+		return result;
+	}
+	if (!_changeValue.empty()) {
+		AlifObject* arg = alifUStr_fromString(_changeValue.c_str());
+		if (arg != nullptr) {
+			result = alifObject_callOneArg(handler, arg);
+			ALIF_DECREF(arg);
+			/* معالِجٌ لا يقبل وسيطاً: نُعيد المحاولةَ بلا وسيط */
+			if (result == nullptr) alifErr_clear();
+		}
+	}
+	if (result == nullptr) {
+		AlifObject* noArgs = alifTuple_new(0);
+		result = (noArgs == nullptr) ? nullptr
+		       : alifObject_callObject(handler, noArgs);
+		ALIF_XDECREF(noArgs);
+	}
+	ALIF_DECREF(handler);
+	return result;
+}
+
 static void clearHandlers() {
-	for (auto& kv : _graphicsHandlers_) ALIF_XDECREF(kv.second);
+	for (auto& kv : _graphicsHandlers_) {
+		ALIF_XDECREF(kv.second.fn);
+		ALIF_XDECREF(kv.second.arg);
+	}
 	_graphicsHandlers_.clear();
 }
 
@@ -176,6 +234,26 @@ static AlifObject* element_value(ElementObject* s, AlifObject* v)    { return se
 static AlifObject* element_borderColor(ElementObject* s, AlifObject* v) { return setTextProp(s, v, props::BORDER_COLOR); }
 
 /* مسجّلُ معالِجٍ عامٌّ — يُستعمل لِـ`عند_النقر` و`عند_تغير` */
+static std::string bindHandler(AlifObject* _callable, AlifObject* _boundArg) {
+	char key[32]{};
+	snprintf(key, sizeof(key), "h%llu", ++_graphicsHandlerSeq_);
+	HandlerEntry e{};
+	e.fn = ALIF_NEWREF(_callable);
+	e.arg = (_boundArg == nullptr) ? nullptr : ALIF_NEWREF(_boundArg);
+	_graphicsHandlers_.emplace(key, e);
+	return std::string(key);
+}
+
+/* يُعلّق معالِجاً على عقدةٍ خامٍّ (لا على عنصرِ ألف) — تستعمله البنّاءاتُ
+   المركَّبةُ التي تُنشئ عُقَدَها بنفسِها. */
+static void attachHandler(const NodePtr& _node, AlifObject* _callable,
+                          IREventType _type, AlifObject* _boundArg) {
+	sad::ui::IREvent ev{};
+	ev.type = _type;
+	ev.expression = bindHandler(_callable, _boundArg);
+	_node->addEvent(ev);
+}
+
 static AlifObject* registerHandler(ElementObject* _self, AlifObject* _callable,
                                    IREventType _type, const char* _where) {
 	if (!isCallable(_callable)) {
@@ -185,13 +263,9 @@ static AlifObject* registerHandler(ElementObject* _self, AlifObject* _callable,
 	/* المفتاحُ عدّادٌ لا عنوانُ كائن: `كائن.طريقة` واللامدا يُنشئان كائناً
 	   جديداً في كلّ نداءِ بناء، فالفهرسةُ بالعنوان تُنمي السجلَّ بلا حدّ.
 	   ويُمسح ما لم يعُد في الشجرة الحيّة بعد كلّ إعادةِ بناء. */
-	char key[32]{};
-	snprintf(key, sizeof(key), "h%llu", ++_graphicsHandlerSeq_);
-	_graphicsHandlers_.emplace(key, ALIF_NEWREF(_callable));
-
 	sad::ui::IREvent ev{};
 	ev.type = _type;
-	ev.expression = key;
+	ev.expression = bindHandler(_callable, nullptr);
 	_self->node->addEvent(ev);
 	return ALIF_NEWREF((AlifObject*)_self);
 }
@@ -353,9 +427,10 @@ static AlifObject* graphics_divider(AlifObject* _module, AlifObject* /*_ignored*
 
 
 /* ═══ بقيّةُ السطح ═══
- * ما دون هذا مُصيَّرٌ فعلاً في `platform_renderer.cpp`، لا مجرّدَ مدخلةٍ
- * في التعداد. وقد استُبعد عمداً ما يرسم شكلاً بلا بيانات (جدول_بيانات،
- * تقويم، مشغل_فيديو، ألسنة، عرض_ويب…) — يُوصَل حين يُنفَّذ لا قبل.
+ * ما دون هذا مُصيَّرٌ فعلاً في `platform_renderer.cpp`، لا مجرَّدَ مدخلةٍ
+ * في التعداد. وما كان يرسم شكلاً بلا بيانات صار يُبنى تركيباً من
+ * عُقَدٍ تعمل (انظر «العناصرُ المركَّبة» أدناه)، وما لا يُركَّب من
+ * موجود (مشغل_فيديو، عرض_ويب…) يُوصَل حين يُنفَّذ لا قبله.
  */
 
 /* عناصرُ حاويةٌ: تأخذ أبناءً */
@@ -397,6 +472,330 @@ static AlifObject* buildNumeric(AlifObject* _module, UINodeType _type, AlifObjec
 }
 static AlifObject* graphics_progress(AlifObject* m, AlifObject* v) { return buildNumeric(m, UINodeType::ProgressBar, v); }
 static AlifObject* graphics_slider(AlifObject* m, AlifObject* v)   { return buildNumeric(m, UINodeType::Slider,      v); }
+
+/* ═══ العناصرُ المركَّبة ═══
+ *
+ * ثلاثةٌ كانت مستبعَدةً عمداً لأنّ `platform_renderer.cpp` يرسم لها شكلاً
+ * بلا بيانات: `DataTable` يرسم صندوقاً وخطوطاً **ويتجاهل أبناءَه**
+ * (`platform_renderer.cpp:1516`)، و`Calendar` صندوقٌ ورمزُ نتيجةٍ واحد
+ * (‏:2350)، و`Tabs` شريطٌ رماديٌّ لا يختار (‏:1570).
+ *
+ * فوصلناها **تركيباً لا ترقيعاً**: كلٌّ منها تُبنى من عُقَدٍ مقيسةٍ تعمل
+ * أصلاً (‏Column · Row · Container · Text · Button). والثمنُ مقصود:
+ * `source/Modules/Graphics/core` يبقى نسخةً حرفيّةً من لغة ص — لا تفرّعَ
+ * فيه إلّا اختصارُ الهويّةِ في `reconciler.cpp`. ومتى نفّذت ص العُقَدَ
+ * الأصليّةَ انتقلنا إليها بلا كسرِ سطح: الأسماءُ والوسائطُ هي هي.
+ */
+
+/* لوحُ الألوان الافتراضيّ — يوافق أمثلةَ المستودع الداكنة. */
+namespace palette {
+	constexpr const char* HEAD_BG    = "#2b3346";
+	constexpr const char* HEAD_TEXT  = "#ffd479";
+	constexpr const char* ROW_A      = "#1b2437";
+	constexpr const char* ROW_B      = "#141c2c";
+	constexpr const char* CELL_TEXT  = "#e6e6e6";
+	constexpr const char* MUTED_TEXT = "#8fa3bf";
+	constexpr const char* ACCENT     = "#1e88e5";
+	constexpr const char* MUTED      = "#3a4256";
+}
+
+/* أيُّ كائنِ ألفٍ إلى نصٍّ للعرض */
+static bool displayString(AlifObject* _obj, std::string* _out) {
+	AlifObject* asStr = nullptr;
+	AlifObject* v = _obj;
+	if (!ALIFUSTR_CHECK(v)) {
+		asStr = alifObject_str(v);
+		if (asStr == nullptr) return false;
+		v = asStr;
+	}
+	bool ok = asUTF8(v, _out);
+	ALIF_XDECREF(asStr);
+	return ok;
+}
+
+static NodePtr makeText(const std::string& _text, const char* _color, double _fontSize) {
+	NodePtr n = IRNode::create(UINodeType::Text);
+	n->setProperty(props::TEXT, _text);
+	n->setProperty(props::COLOR, std::string(_color));
+	n->setProperty(props::FONT_SIZE, _fontSize);
+	return n;
+}
+
+/* خليّةٌ: حاويةٌ بعرضٍ ثابتٍ وخلفيّةٍ، فيها نصّ. العرضُ الثابتُ هو ما يجعل
+   الأعمدةَ تصطفّ — لا قياسَ عمودٍ تلقائيّاً في محرّك التخطيط. */
+static NodePtr makeCell(const std::string& _text, double _width,
+                        const char* _bg, const char* _color, double _fontSize) {
+	NodePtr cell = IRNode::create(UINodeType::Container);
+	cell->setProperty(props::WIDTH, _width);
+	cell->setProperty(props::PADDING, 8.0);
+	cell->setProperty(props::BG_COLOR, std::string(_bg));
+	cell->addChild(makeText(_text, _color, _fontSize));
+	return cell;
+}
+
+/* جدول_بيانات(رؤوس، صفوف، عرض_عمود=140، حجم_خط=18)
+ *
+ *     جدول_بيانات(["الاسم", "العمر"], [["زيد", 30], ["عمرو", 25]])
+ *
+ * عددُ الأعمدةِ من الرؤوس؛ الصفُّ الأقصرُ يُكمَّل فراغاً والأطولُ يُقصّ،
+ * فلا يلتوي الاصطفافُ ببياناتٍ ناقصة. */
+static AlifObject* graphics_dataTable(AlifObject* _module, AlifObject* _args,
+                                      AlifObject* _kwargs) {
+	static const char* const kwlist[] = {"", "", "عرض_عمود", "حجم_خط", nullptr};
+	AlifObject* headersObj = nullptr;
+	AlifObject* rowsObj = nullptr;
+	double colWidth = 140.0;
+	double fontSize = 18.0;
+	if (!alifArg_parseTupleAndKeywords(_args, _kwargs, "OO|dd", kwlist,
+	                                   &headersObj, &rowsObj, &colWidth, &fontSize))
+		return nullptr;
+
+	AlifObject* headers = alifSequence_fast(headersObj, "جدول_بيانات: الرؤوسُ ليست قائمة");
+	if (headers == nullptr) return nullptr;
+	AlifObject* rows = alifSequence_fast(rowsObj, "جدول_بيانات: الصفوفُ ليست قائمة");
+	if (rows == nullptr) { ALIF_DECREF(headers); return nullptr; }
+
+	AlifSizeT ncols = ALIFSEQUENCE_FAST_GET_SIZE(headers);
+	AlifSizeT nrows = ALIFSEQUENCE_FAST_GET_SIZE(rows);
+	if (ncols < 1) {
+		alifErr_setString(_alifExcValueError_, "جدول_بيانات: لا رؤوسَ للجدول");
+		ALIF_DECREF(headers); ALIF_DECREF(rows);
+		return nullptr;
+	}
+
+	NodePtr root = IRNode::create(UINodeType::Column);
+	root->setProperty(props::SPACING, 1.0);
+	root->setProperty(props::BG_COLOR, std::string(palette::MUTED));
+
+	/* صفُّ الرؤوس */
+	{
+		NodePtr head = IRNode::create(UINodeType::Row);
+		head->setProperty(props::SPACING, 1.0);
+		AlifObject** items = ALIFSEQUENCE_FAST_ITEMS(headers);
+		for (AlifSizeT c = 0; c < ncols; c++) {
+			std::string text;
+			if (!displayString(items[c], &text)) {
+				ALIF_DECREF(headers); ALIF_DECREF(rows); return nullptr;
+			}
+			head->addChild(makeCell(text, colWidth,
+			                        palette::HEAD_BG, palette::HEAD_TEXT, fontSize));
+		}
+		root->addChild(head);
+	}
+
+	/* صفوفُ البيانات — تلوينٌ متناوبٌ ليُتتبَّع السطرُ بالعين */
+	AlifObject** rowItems = ALIFSEQUENCE_FAST_ITEMS(rows);
+	for (AlifSizeT r = 0; r < nrows; r++) {
+		AlifObject* cells = alifSequence_fast(rowItems[r], "جدول_بيانات: الصفُّ ليس قائمة");
+		if (cells == nullptr) { ALIF_DECREF(headers); ALIF_DECREF(rows); return nullptr; }
+		AlifSizeT have = ALIFSEQUENCE_FAST_GET_SIZE(cells);
+		AlifObject** cellItems = ALIFSEQUENCE_FAST_ITEMS(cells);
+
+		NodePtr row = IRNode::create(UINodeType::Row);
+		row->setProperty(props::SPACING, 1.0);
+		const char* bg = (r % 2 == 0) ? palette::ROW_A : palette::ROW_B;
+		bool failed = false;
+		for (AlifSizeT c = 0; c < ncols; c++) {
+			std::string text;
+			if (c < have and !displayString(cellItems[c], &text)) { failed = true; break; }
+			row->addChild(makeCell(text, colWidth, bg, palette::CELL_TEXT, fontSize));
+		}
+		ALIF_DECREF(cells);
+		if (failed) { ALIF_DECREF(headers); ALIF_DECREF(rows); return nullptr; }
+		root->addChild(row);
+	}
+
+	ALIF_DECREF(headers);
+	ALIF_DECREF(rows);
+	return newElement(_module, std::move(root));
+}
+
+/* ═══ التقويم ═══ */
+
+static bool isLeapYear(int _y) {
+	return (_y % 4 == 0 and _y % 100 != 0) or (_y % 400 == 0);
+}
+
+static int daysInMonth(int _y, int _m) {
+	static const int len[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	if (_m == 2 and isLeapYear(_y)) return 29;
+	return len[_m - 1];
+}
+
+/* يومُ الأسبوع بجدولِ سَكِنْدرسون: ٠ = الأحد */
+static int weekdayOf(int _y, int _m, int _d) {
+	static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+	int y = _y;
+	if (_m < 3) y -= 1;
+	int w = (y + y / 4 - y / 100 + y / 400 + t[_m - 1] + _d) % 7;
+	return (w + 7) % 7;
+}
+
+/* تقويم(سنة، شهر، يوم=0، عند_اختيار=None، عرض_خلية=44)
+ *
+ * شبكةُ شهرٍ حقيقيّة: اسمُ الشهرِ والسنة، ثمّ رؤوسُ الأيّام، ثمّ الأسابيع.
+ * اليومُ المحدَّدُ يُبرَز، وإن مُرِّر معالِجٌ نُودِيَ برقمِ اليومِ المنقور. */
+static AlifObject* graphics_calendar(AlifObject* _module, AlifObject* _args,
+                                     AlifObject* _kwargs) {
+	static const char* const kwlist[] = {"", "", "يوم", "عند_اختيار", "عرض_خلية", nullptr};
+	AlifIntT year = 0, month = 0, day = 0;
+	AlifObject* onPick = nullptr;
+	double cellW = 44.0;
+	if (!alifArg_parseTupleAndKeywords(_args, _kwargs, "ii|iOd", kwlist,
+	                                   &year, &month, &day, &onPick, &cellW))
+		return nullptr;
+
+	if (month < 1 or month > 12) {
+		alifErr_setString(_alifExcValueError_, "تقويم: الشهرُ خارجَ المدى ١–١٢");
+		return nullptr;
+	}
+	if (year < 1 or year > 9999) {
+		alifErr_setString(_alifExcValueError_, "تقويم: السنةُ خارجَ المدى ١–٩٩٩٩");
+		return nullptr;
+	}
+	if (onPick == ALIF_NONE) onPick = nullptr;
+	if (onPick != nullptr and !isCallable(onPick)) {
+		alifErr_setString(_alifExcTypeError_, "تقويم: عند_اختيار ليس قابلاً للنداء");
+		return nullptr;
+	}
+
+	static const char* const monthNames[] = {
+		"يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+		"يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+	};
+	static const char* const dayNames[] = {"ح", "ن", "ث", "ر", "خ", "ج", "س"};
+
+	NodePtr root = IRNode::create(UINodeType::Column);
+	root->setProperty(props::SPACING, 2.0);
+	root->setProperty(props::BG_COLOR, std::string(palette::ROW_B));
+	root->setProperty(props::PADDING, 10.0);
+
+	/* العنوانُ عقدتان لا واحدة: نصٌّ عربيٌّ فيه عددٌ لاتينيٌّ يخرج معكوسَ
+	   الأرقام (`سبتمبر 2026` تُرسَم `سبتمبر 6202`) — مقيسٌ في لقطة
+	   `مشهد_مركب`. العددُ وحدَه يخرج سليماً، والصفُّ يرتّبهما من اليمين. */
+	{
+		NodePtr title = IRNode::create(UINodeType::Row);
+		title->setProperty(props::SPACING, 8.0);
+		title->addChild(makeText(monthNames[month - 1], palette::HEAD_TEXT, 22.0));
+		title->addChild(makeText(std::to_string(year), palette::HEAD_TEXT, 22.0));
+		root->addChild(title);
+	}
+
+	{
+		NodePtr head = IRNode::create(UINodeType::Row);
+		head->setProperty(props::SPACING, 2.0);
+		for (int i = 0; i < 7; i++) {
+			head->addChild(makeCell(dayNames[i], cellW,
+			                        palette::HEAD_BG, palette::MUTED_TEXT, 15.0));
+		}
+		root->addChild(head);
+	}
+
+	int lead = weekdayOf(year, month, 1);
+	int total = daysInMonth(year, month);
+	int weeks = (lead + total + 6) / 7;
+	int d = 1;
+	for (int w = 0; w < weeks; w++) {
+		NodePtr week = IRNode::create(UINodeType::Row);
+		week->setProperty(props::SPACING, 2.0);
+		for (int c = 0; c < 7; c++) {
+			bool blank = (w == 0 and c < lead) or d > total;
+			if (blank) {
+				week->addChild(makeCell("", cellW, palette::ROW_B,
+				                        palette::CELL_TEXT, 16.0));
+				continue;
+			}
+			bool picked = (d == day);
+			NodePtr cell = makeCell(std::to_string(d), cellW,
+			                        picked ? palette::ACCENT : palette::ROW_A,
+			                        picked ? "#ffffff" : palette::CELL_TEXT, 16.0);
+			/* الاسمُ صريحٌ: بلا هذا يشتقُّ `assignIds` اسماً من الموضع، فيتبدّل
+			   اسمُ كلّ خليّةٍ حين يتبدّل عددُ أسابيعِ الشهر عند تغيّره. */
+			cell->setId("يوم-" + std::to_string(month) + "-" + std::to_string(d));
+			if (onPick != nullptr) {
+				AlifObject* dayNum = alifLong_fromLong(d);
+				if (dayNum == nullptr) return nullptr;
+				attachHandler(cell, onPick, IREventType::OnTap, dayNum);
+				ALIF_DECREF(dayNum);   /* attachHandler أخذ مرجعَه الخاصّ */
+			}
+			week->addChild(cell);
+			d++;
+		}
+		root->addChild(week);
+	}
+	return newElement(_module, std::move(root));
+}
+
+/* ألسنة(عناوين، مختار=0، عند_اختيار=None، عرض_لسان=0)
+ *
+ *     ألسنة(["الملف", "تحرير", "عرض"], ح.اللسان, بدل_اللسان)
+ *
+ * يُنادى `بدل_اللسان(فهرس)` برقمِ اللسانِ المنقور. الشريطُ وحدَه — المحتوى
+ * على المستعمِل، فاللسانُ لا يعرف ما تحته. */
+static AlifObject* graphics_tabs(AlifObject* _module, AlifObject* _args,
+                                 AlifObject* _kwargs) {
+	static const char* const kwlist[] = {"", "مختار", "عند_اختيار", "عرض_لسان", nullptr};
+	AlifObject* labelsObj = nullptr;
+	AlifIntT selected = 0;
+	AlifObject* onPick = nullptr;
+	double tabWidth = 0.0;
+	if (!alifArg_parseTupleAndKeywords(_args, _kwargs, "O|iOd", kwlist,
+	                                   &labelsObj, &selected, &onPick, &tabWidth))
+		return nullptr;
+
+	if (onPick == ALIF_NONE) onPick = nullptr;
+	if (onPick != nullptr and !isCallable(onPick)) {
+		alifErr_setString(_alifExcTypeError_, "ألسنة: عند_اختيار ليس قابلاً للنداء");
+		return nullptr;
+	}
+
+	AlifObject* labels = alifSequence_fast(labelsObj, "ألسنة: العناوينُ ليست قائمة");
+	if (labels == nullptr) return nullptr;
+	AlifSizeT n = ALIFSEQUENCE_FAST_GET_SIZE(labels);
+	AlifObject** items = ALIFSEQUENCE_FAST_ITEMS(labels);
+
+	NodePtr bar = IRNode::create(UINodeType::Row);
+	bar->setProperty(props::SPACING, 2.0);
+	bar->setProperty(props::BG_COLOR, std::string(palette::ROW_B));
+
+	for (AlifSizeT i = 0; i < n; i++) {
+		std::string label;
+		if (!displayString(items[i], &label)) { ALIF_DECREF(labels); return nullptr; }
+		bool active = ((AlifSizeT)selected == i);
+
+		NodePtr btn = IRNode::create(UINodeType::Button);
+		btn->setProperty(props::TEXT, label);
+		btn->setProperty(props::BG_COLOR,
+		                 std::string(active ? palette::ACCENT : palette::MUTED));
+		btn->setProperty(props::COLOR,
+		                 std::string(active ? "#ffffff" : palette::MUTED_TEXT));
+		btn->setProperty(props::FONT_SIZE, 18.0);
+		if (tabWidth > 0.0) btn->setProperty(props::WIDTH, tabWidth);
+		btn->setId("لسان-" + std::to_string((long long)i));
+		if (onPick != nullptr) {
+			AlifObject* idx = alifLong_fromLong((long)i);
+			if (idx == nullptr) { ALIF_DECREF(labels); return nullptr; }
+			attachHandler(btn, onPick, IREventType::OnTap, idx);
+			ALIF_DECREF(idx);
+		}
+
+		/* خطُّ الإبراز تحت اللسان — هو ما يميّز المختارَ حين يمرّ الفأرُ فوق
+		   لسانٍ آخرَ فتتبدّل خلفيّتُه مؤقّتاً. */
+		NodePtr underline = IRNode::create(UINodeType::Container);
+		underline->setProperty(props::HEIGHT, 3.0);
+		if (tabWidth > 0.0) underline->setProperty(props::WIDTH, tabWidth);
+		underline->setProperty(props::BG_COLOR,
+		                       std::string(active ? palette::HEAD_TEXT : palette::ROW_B));
+
+		NodePtr tab = IRNode::create(UINodeType::Column);
+		tab->setProperty(props::SPACING, 0.0);
+		tab->addChild(btn);
+		tab->addChild(underline);
+		bar->addChild(tab);
+	}
+	ALIF_DECREF(labels);
+	return newElement(_module, std::move(bar));
+}
 
 /* ═══ تذكيرُ النتائج (memo) ═══
  *
@@ -610,26 +1009,11 @@ static AlifObject* graphics_run(AlifObject* _module, AlifObject* _args, AlifObje
 
 					ALIF_BLOCK_THREADS
 
-					AlifObject* handler = ALIF_NEWREF(it->second);
-					/* حدثُ التغيّر يحمل قيمةً؛ نمرّرها إن قبِلها المعالِج */
-					AlifObject* result = nullptr;
-					if (_type == IREventType::OnChange and !_data.value.empty()) {
-						AlifObject* arg = alifUStr_fromString(_data.value.c_str());
-						if (arg != nullptr) {
-							result = alifObject_callOneArg(handler, arg);
-							ALIF_DECREF(arg);
-							if (result == nullptr) alifErr_clear();
-						}
-					}
-					if (result == nullptr) {
-						AlifObject* noArgs = alifTuple_new(0);
-						result = (noArgs == nullptr) ? nullptr
-						       : alifObject_callObject(handler, noArgs);
-						ALIF_XDECREF(noArgs);
-					}
+					AlifObject* result = invokeHandler(
+						it->second,
+						_type == IREventType::OnChange ? _data.value : std::string());
 					if (result == nullptr) { stopping = true; window.close(); }
 					else { ALIF_DECREF(result); pendingRebuild = true; }
-					ALIF_DECREF(handler);
 
 					ALIF_UNBLOCK_THREADS
 				});
@@ -738,6 +1122,281 @@ static AlifObject* graphics_snapshot(AlifObject* _module, AlifObject* _args) {
 	return alifBool_fromLong(ok ? 1 : 0);
 }
 
+/* ═══ القياس ═══
+ *
+ * ما كان مقيساً حتّى الآن أطوارٌ منفردة: بناءٌ، مطابقةٌ، تخطيطٌ، تصيير.
+ * وهي لا تُجيب عن السؤال الذي يهمّ المستعمِل: **كم يمضي بين نقرةٍ وصورة؟**
+ * ولا عن السؤال الذي يمسك التسريب: **ماذا يبقى بعد عشرة آلافِ نقرة؟**
+ *
+ * `قياس_تفاعل` يُغلق البابَين: يُنادي معالِجَ أوّلِ زرٍّ في الشجرة كما
+ * ينادي حدثُ SDL تماماً، ثمّ يُعيد البناءَ ويطابق ويُرقّع ويُصيّر، ويقيس
+ * الدورةَ كاملة. النسبُ المئويّةُ لا المتوسّط: المتوسّطُ يُخفي التلعثمَ
+ * الذي يراه المستعمِل، و٩٥ هي التي يشتكي منها.
+ */
+
+
+/* الذاكرةُ المقيمةُ بالكيلوبايت — صفرٌ إن تعذّر القياسُ على المنصّة */
+static double residentKiB() {
+#if defined(_WIN32)
+	/* `PrivateUsage` لا `WorkingSetSize`: الثانيةُ صفحاتٌ لم يُقلّمها النظامُ
+	   بعدُ، فترتفع وتنخفض بلا علاقةٍ بما خصّصناه — قِسناها فخرجت غيرَ
+	   مطّردةٍ مع عدد الدورات. الأولى هي الالتزامُ الخاصُّ فعلاً. */
+	PROCESS_MEMORY_COUNTERS_EX pmc{};
+	if (GetProcessMemoryInfo(GetCurrentProcess(),
+	                         (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)))
+		return (double)pmc.PrivateUsage / 1024.0;
+	return 0.0;
+#elif defined(__APPLE__)
+	mach_task_basic_info info{};
+	mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+	if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+	              (task_info_t)&info, &count) == KERN_SUCCESS)
+		return (double)info.resident_size / 1024.0;
+	return 0.0;
+#else
+	FILE* f = fopen("/proc/self/statm", "r");
+	if (f == nullptr) return 0.0;
+	long total = 0, resident = 0;
+	int got = fscanf(f, "%ld %ld", &total, &resident);
+	fclose(f);
+	if (got != 2) return 0.0;
+	return (double)resident * (double)sysconf(_SC_PAGESIZE) / 1024.0;
+#endif
+}
+
+/* ذاكرة() — الذاكرةُ الخاصّةُ الملتزَمةُ بالكيلوبايت.
+ *
+ * `قياس_تفاعل` يقيس الذاكرةَ عبر السلسلةِ كلِّها: بناءٌ ومطابقةٌ وترقيعٌ
+ * وتصيير. فحين ينمو الرقمُ لا يقول أيَّ طبقةٍ تُمسك. وهذه تُقاس بلا
+ * نافذةٍ أصلاً، فتفصل بناءَ الشجرةِ عن تصييرها.
+ */
+static AlifObject* graphics_memory(AlifObject* /*_module*/, AlifObject* /*_ignored*/) {
+	return alifFloat_fromDouble(residentKiB());
+}
+
+/* أوّلُ مفتاحِ نقرٍ في الشجرة، بترتيبِ العمق — هو ما يجده مُرسِلُ الحدث */
+static bool firstTapKey(const NodePtr& _node, std::string* _out) {
+	if (_node == nullptr) return false;
+	for (const auto& ev : _node->getEvents()) {
+		if (ev.type == IREventType::OnTap and !ev.expression.empty()) {
+			*_out = ev.expression;
+			return true;
+		}
+	}
+	for (const auto& child : _node->getChildren())
+		if (firstTapKey(child, _out)) return true;
+	return false;
+}
+
+static double percentile(std::vector<double>& _sorted, double _p) {
+	if (_sorted.empty()) return 0.0;
+	size_t i = (size_t)(_p * (double)(_sorted.size() - 1) + 0.5);
+	if (i >= _sorted.size()) i = _sorted.size() - 1;
+	return _sorted[i];
+}
+
+/* قياس_تفاعل(دالة_البناء، عدد=1000، عرض=480، ارتفاع=360)
+ *
+ * يُعيد صفّاً من ثلاثةَ عشرَ:
+ *   ٠ عددُ العيّنات
+ *   ١ الوسيط (م.ث)  ٢ ٩٥٪  ٣ ٩٩٪  ٤ الأقصى  ٥ المتوسّط   (الدورةُ كاملة)
+ *   ٦ وسيطُ العمل  ٧ ٩٥٪ عمل  ٨ أقصى عمل  (بلا انتظارِ المزامنة)
+ *   ٩ ذاكرةٌ بعد الإحماء  ١٠ عند المنتصف  ١١ في النهاية (ك.ب)
+ *   ١٢ عددُ المعالِجات الباقية في السجلّ
+ *
+ * ساعتان لا واحدة: المُصيِّرُ يُنشَأ بـ`SDL_RENDERER_PRESENTVSYNC`
+ * (`window.cpp:129`)، فالدورةُ الكاملةُ تنتهي عند نبضةِ الشاشةِ لا عند
+ * فراغِ عملنا. الكاملةُ هي ما يشعر به المستعمِل، وساعةُ العمل
+ * هي ما ينمو مع حجمِ الشجرة. خلطُهما يُخفي الاثنَين.
+ *
+ * والذاكرةُ ثلاثُ عيّناتٍ لا اثنتان: نقطتان لا تُفرّقان بين
+ * تسريبٍ مطّردٍ ومخابئَ تبلغ استقرارَها.
+ */
+static AlifObject* graphics_bench(AlifObject* _module, AlifObject* _args,
+                                  AlifObject* _kwargs) {
+	static const char* const kwlist[] = {"", "عدد", "عرض", "ارتفاع", nullptr};
+	AlifObject* source = nullptr;
+	AlifIntT count = 1000;
+	AlifIntT width = 480;
+	AlifIntT height = 360;
+	if (!alifArg_parseTupleAndKeywords(_args, _kwargs, "O|iii", kwlist,
+	                                   &source, &count, &width, &height))
+		return nullptr;
+
+	if (_graphicsRunning_) {
+		alifErr_setString(_alifExcRuntimeError_,
+			"قياس_تفاعل: لا يجوز القياسُ داخلَ تطبيقٍ يعمل");
+		return nullptr;
+	}
+	if (!isCallable(source)) {
+		alifErr_setString(_alifExcTypeError_, "قياس_تفاعل: يلزم دالّةُ بناء");
+		return nullptr;
+	}
+	if (count < 1) {
+		alifErr_setString(_alifExcValueError_, "قياس_تفاعل: العددُ أقلُّ من واحد");
+		return nullptr;
+	}
+
+	AlifObject* liveRef = nullptr;
+	NodePtr liveTree = buildTree(_module, source, &liveRef, "قياس_تفاعل");
+	if (liveTree == nullptr) return nullptr;
+	_graphicsRunning_ = true;
+
+	sad::ui::Reconciler reconciler{};
+	std::vector<double> samples;   /* الدورةُ كاملةً — بانتظارِ المزامنة */
+	std::vector<double> work;      /* حتّى الترقيع — بلا انتظار */
+	samples.reserve((size_t)count);
+	work.reserve((size_t)count);
+
+	/* الإحماء: أوّلُ الدورات تحمل تكاليفَ لا تتكرّر — ذاكرةُ الخطّ المخبّأة
+	   وتخصيصاتُ SDL الأولى. نقيسُها ولا نحسبها في النسب. */
+	const AlifIntT warmup = (count > 100) ? 100 : (count / 10 + 1);
+
+	bool created = false;
+	bool noHandler = false;   /* لا زرَّ في الشجرة أصلاً */
+	bool raised = false;      /* استثناءُ ألفٍ مضبوطٌ من نداءِ المستعمِل */
+	bool frozen = false;      /* دالّةُ البناء أعادت الجذرَ ذاتَه */
+	double rssWarm = 0.0;
+	double rssMid = 0.0;
+	double rssEnd = 0.0;
+	size_t handlersEnd = 0;
+
+	{
+		sad::ui::desktop::DesktopWindow window;
+		sad::ui::desktop::WindowOptions options;
+		options.title = "ألف — قياس";
+		options.width = width;
+		options.height = height;
+
+		ALIF_BEGIN_ALLOW_THREADS
+		if (window.create(options)) {
+			created = true;
+			window.setContent(liveTree);
+			window.invalidate();
+			window.runOneFrame();
+
+			for (AlifIntT i = 0; i < count; i++) {
+				std::string key;
+				if (!firstTapKey(liveTree, &key)) { noHandler = true; break; }
+
+				auto t0 = std::chrono::steady_clock::now();
+
+				ALIF_BLOCK_THREADS
+				auto it = _graphicsHandlers_.find(key);
+				if (it == _graphicsHandlers_.end()) {
+					noHandler = true;
+				} else {
+					AlifObject* result = invokeHandler(it->second, std::string());
+					if (result == nullptr) raised = true;
+					else ALIF_DECREF(result);
+				}
+				if (!noHandler and !raised) {
+					AlifObject* newRef = nullptr;
+					NodePtr newTree = buildTree(_module, source, &newRef, "قياس_تفاعل");
+					if (newTree == nullptr) {
+						raised = true;
+					} else if (newTree == liveTree) {
+						frozen = true;
+					} else {
+						auto d = reconciler.diff(liveTree, newTree);
+						if (!d.isEmpty()) {
+							bool structural = isStructural(d);
+							if (reconciler.patch(liveTree, d)) {
+								if (structural) window.setContent(liveTree);
+								else window.applyPatches(d.size(), false);
+							}
+						}
+						pruneHandlers(liveTree);
+					}
+					ALIF_XDECREF(newRef);
+				}
+				ALIF_UNBLOCK_THREADS
+
+				if (noHandler or raised or frozen) break;
+
+				auto tWork = std::chrono::steady_clock::now();
+
+				/* التصييرُ داخلَ القياس عمداً: النقرةُ لا تنتهي عند الترقيع
+				   بل عند الصورة. و`invalidate` لازمٌ لأنّ `runOneFrame`
+				   لا يُصيّر إلّا عند طلبِ رسمٍ صريح. */
+				window.invalidate();
+				window.runOneFrame();
+
+				auto t1 = std::chrono::steady_clock::now();
+				if (i >= warmup) {
+					samples.push_back(
+						std::chrono::duration<double, std::milli>(t1 - t0).count());
+					work.push_back(
+						std::chrono::duration<double, std::milli>(tWork - t0).count());
+				}
+				if (i == warmup) rssWarm = residentKiB();
+				if (i == count / 2) rssMid = residentKiB();
+			}
+
+			rssEnd = residentKiB();
+			handlersEnd = _graphicsHandlers_.size();
+			window.destroy();
+		}
+		ALIF_END_ALLOW_THREADS
+	}
+
+	_graphicsRunning_ = false;
+	ALIF_XDECREF(liveRef);
+	clearHandlers();
+
+	if (raised) return nullptr;   /* الاستثناءُ مضبوطٌ من نداءِ ألف */
+	if (!created) {
+		alifErr_setString(_alifExcRuntimeError_, "قياس_تفاعل: تعذّر إنشاءُ النافذة");
+		return nullptr;
+	}
+	if (frozen) {
+		alifErr_setString(_alifExcRuntimeError_,
+			"قياس_تفاعل: دالّةُ البناءِ أعادت الجذرَ ذاتَه");
+		return nullptr;
+	}
+	if (noHandler) {
+		alifErr_setString(_alifExcRuntimeError_,
+			"قياس_تفاعل: لا معالِجَ نقرٍ في الشجرة — لا شيءَ يُقاس");
+		return nullptr;
+	}
+
+	std::vector<double> sorted = samples;
+	std::sort(sorted.begin(), sorted.end());
+	std::vector<double> sortedWork = work;
+	std::sort(sortedWork.begin(), sortedWork.end());
+	double sum = 0.0;
+	for (double v : samples) sum += v;
+	double mean = samples.empty() ? 0.0 : sum / (double)samples.size();
+
+	const int N = 13;
+	AlifObject* out = alifTuple_new(N);
+	if (out == nullptr) return nullptr;
+	AlifObject* values[N] = {
+		alifLong_fromLong((long)samples.size()),
+		alifFloat_fromDouble(percentile(sorted, 0.50)),
+		alifFloat_fromDouble(percentile(sorted, 0.95)),
+		alifFloat_fromDouble(percentile(sorted, 0.99)),
+		alifFloat_fromDouble(sorted.empty() ? 0.0 : sorted.back()),
+		alifFloat_fromDouble(mean),
+		alifFloat_fromDouble(percentile(sortedWork, 0.50)),
+		alifFloat_fromDouble(percentile(sortedWork, 0.95)),
+		alifFloat_fromDouble(sortedWork.empty() ? 0.0 : sortedWork.back()),
+		alifFloat_fromDouble(rssWarm),
+		alifFloat_fromDouble(rssMid),
+		alifFloat_fromDouble(rssEnd),
+		alifLong_fromLong((long)handlersEnd),
+	};
+	for (int i = 0; i < N; i++) {
+		if (values[i] == nullptr) {
+			for (int j = 0; j < i; j++) ALIF_DECREF(values[j]);
+			ALIF_DECREF(out);
+			return nullptr;
+		}
+	}
+	for (int i = 0; i < N; i++) ALIFTUPLE_SET_ITEM(out, i, values[i]);
+	return out;
+}
+
 /* ═══ التسجيل ═══ */
 
 static AlifMethodDef _alifGraphicsMethods_[] = {
@@ -781,6 +1440,11 @@ static AlifMethodDef _alifGraphicsMethods_[] = {
 	{"شريط_تقدم",     ALIF_CPPFUNCTION_CAST(graphics_progress),  METHOD_O},
 	{"منزلق",         ALIF_CPPFUNCTION_CAST(graphics_slider),    METHOD_O},
 	{"مذكرة",         ALIF_CPPFUNCTION_CAST(graphics_memo),     METHOD_VARARGS},
+	{"جدول_بيانات",   ALIF_CPPFUNCTION_CAST(graphics_dataTable), METHOD_VARARGS | METHOD_KEYWORDS},
+	{"تقويم",         ALIF_CPPFUNCTION_CAST(graphics_calendar),  METHOD_VARARGS | METHOD_KEYWORDS},
+	{"ألسنة",         ALIF_CPPFUNCTION_CAST(graphics_tabs),      METHOD_VARARGS | METHOD_KEYWORDS},
+	{"قياس_تفاعل",    ALIF_CPPFUNCTION_CAST(graphics_bench),     METHOD_VARARGS | METHOD_KEYWORDS},
+	{"ذاكرة",         ALIF_CPPFUNCTION_CAST(graphics_memory),    METHOD_NOARGS},
 	{nullptr, nullptr}
 };
 
