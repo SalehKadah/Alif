@@ -16,6 +16,14 @@ import subprocess
 import sys
 import tempfile
 
+# صدَفةُ ويندوز تُصدِر بـcp1252 افتراضاً، فتفشل عند أوّلِ محرفٍ عربيّ أو
+# علامةِ صحّ. نُثبّت UTF-8 على المخرجَين قبل أيّ طباعة.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 
 def اقرأ_bmp(path):
     """يقرأ BMP ‏24/32 بت غيرَ مضغوط ويُعيد عدّاداً للألوان."""
