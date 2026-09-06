@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <unordered_map>
 
 using sad::ui::IRNode;
@@ -102,7 +103,11 @@ static NodePtr nodeOf(AlifObject* _module, AlifObject* _obj, const char* _where)
    المفتاحَ في `IREvent::expression`، فتبقى شجرةُ IR جاهلةً بألفَ تماماً. */
 
 static std::unordered_map<std::string, AlifObject*> _graphicsHandlers_{};
-static unsigned long long _graphicsHandlerSeq_ = 0;
+
+/* حلقةُ SDL واحدةٌ على الخيط، وسجلُّ المعالِجات واحد. فتعشيشُ `تشغيل_تطبيق`
+   داخلَ معالِجٍ يجعل الاستدعاءَ الداخليَّ يمسح معالِجاتِ الخارجيّ عند خروجه،
+   فتموت أزرارُه صامتةً. نمنع التعشيشَ صراحةً. */
+static bool _graphicsRunning_ = false;
 
 static void clearHandlers() {
 	for (auto& kv : _graphicsHandlers_) ALIF_XDECREF(kv.second);
@@ -141,11 +146,13 @@ static AlifObject* element_onTap(ElementObject* _self, AlifObject* _callable) {
 		return nullptr;
 	}
 	char key[32]{};
-	snprintf(key, sizeof(key), "h%llu", ++_graphicsHandlerSeq_);
+	snprintf(key, sizeof(key), "h%llx",
+	         (unsigned long long)(uintptr_t)_callable);
 
-	AlifObject*& slot = _graphicsHandlers_[key];
-	ALIF_XDECREF(slot);
-	slot = ALIF_NEWREF(_callable);
+	auto it = _graphicsHandlers_.find(key);
+	if (it == _graphicsHandlers_.end()) {
+		_graphicsHandlers_.emplace(key, ALIF_NEWREF(_callable));
+	}
 
 	sad::ui::IREvent ev{};
 	ev.type = IREventType::OnTap;
@@ -224,6 +231,24 @@ static AlifObject* graphics_stack(AlifObject* m, AlifObject* a)  { return buildC
 
 /* ═══ التشغيل ═══ */
 
+/* أسماءٌ ثابتةٌ بحسبِ الموضع.
+ *
+ * بلا هذا يُسنِد المُصيِّرُ إلى كلّ عقدةٍ بلا اسمٍ رقماً متزايداً
+ * (`platform_renderer.cpp:2746` ⇒ `widget_1000000`…). فالشجرةُ المعروضةُ
+ * تحمل أسماءً، والشجرةُ المبنيّةُ حديثاً لا تحمل شيئاً، فيراها `diff`
+ * أبناءً مختلفين كلَّهم: حذفٌ للثلاثة وإدراجٌ لثلاثةٍ بدلَها. قِسناه:
+ * ستُّ رقعٍ (‏REMOVE×٣ ثمّ INSERT×٣) لتغييرِ رقمٍ واحد.
+ * الاسمُ المشتقُّ من الموضعِ ثابتٌ بين الأجيال، فيصير الفرقُ رقعةً واحدة.
+ */
+static void assignIds(const NodePtr& _node, const std::string& _path) {
+	if (_node == nullptr) return;
+	if (_node->getId().empty()) _node->setId(_path);
+	const auto& children = _node->getChildren();
+	for (size_t i = 0; i < children.size(); i++) {
+		assignIds(children[i], _path + "." + std::to_string(i));
+	}
+}
+
 /* يُعيد شجرةَ IR من نتيجةِ نداءِ دالّةِ البناء، أو من عنصرٍ مباشرةً.
    يحتفظ بمرجعِ ألفَ في `_keepAlive` حتّى ينتهي الترقيع. */
 static NodePtr buildTree(AlifObject* _module, AlifObject* _source,
@@ -243,11 +268,22 @@ static NodePtr buildTree(AlifObject* _module, AlifObject* _source,
 	if (tree == nullptr) {
 		ALIF_XDECREF(*_keepAlive);
 		*_keepAlive = nullptr;
+		return tree;
 	}
+	assignIds(tree, "ج");
 	return tree;
 }
 
-static bool needsRelayout(const sad::ui::DiffResult& _d) {
+/* هل في مجموعةِ الرقع تغييرٌ بنيويّ؟
+ *
+ * هذا ليس سؤالَ أداءٍ بل سؤالَ سلامة: معالِجُ الفأرة يحتفظ بمؤشّراتٍ خامٍّ
+ * إلى العُقَد (‏hoveredNode_ و pressedNode_ و focusedNode_)، و`setContent`
+ * وحدَه يُصفّرها (`window.cpp:358 clearNodeRefs`) — أمّا `applyPatches`
+ * فلا. ونحن نُرقّع من داخلِ إرسالِ الحدث والمعالِجُ ما يزال ممسِكاً
+ * بالعقدةِ المضغوطة. فأيُّ رقعةٍ تُزيح عقدةً تُخلّف مؤشّراً متدلّياً.
+ * لذلك: تغييرُ الخصائص وحدَه ⇒ ترقيعٌ موضعيّ، وما عداه ⇒ محتوًى جديد.
+ */
+static bool isStructural(const sad::ui::DiffResult& _d) {
 	for (const auto& p : _d.patches) {
 		if (p.type == sad::ui::PatchType::INSERT_CHILD
 		    or p.type == sad::ui::PatchType::REMOVE_CHILD
@@ -272,13 +308,20 @@ static AlifObject* graphics_run(AlifObject* _module, AlifObject* _args, AlifObje
 	if (!alifArg_parseTupleAndKeywords(_args, _kwargs, "O|sii", kwlist,
 	                                   &source, &title, &width, &height)) return nullptr;
 
+	if (_graphicsRunning_) {
+		alifErr_setString(_alifExcRuntimeError_,
+			"تشغيل_تطبيق: لا يجوز تشغيلُ تطبيقٍ داخلَ معالِجِ تطبيقٍ آخر");
+		return nullptr;
+	}
+
 	AlifObject* liveRef = nullptr;
 	NodePtr liveTree = buildTree(_module, source, &liveRef, "تشغيل_تطبيق");
 	if (liveTree == nullptr) return nullptr;
+	_graphicsRunning_ = true;
 
 	sad::ui::Reconciler reconciler{};
 	bool ok = false;
-	bool failed = false;
+	bool stopping = false;   /* رُفع عند أوّلِ خطأٍ فلا يُنادى معالِجٌ بعده */
 	{
 		sad::ui::desktop::DesktopWindow window;
 		sad::ui::desktop::WindowOptions options;
@@ -296,6 +339,7 @@ static AlifObject* graphics_run(AlifObject* _module, AlifObject* _args, AlifObje
 			window.setOnEventCallback(
 				[&](IREventType _type, const std::string& _expr,
 				    const IRNode*, const sad::ui::EventData&) {
+					if (stopping) return;   /* خطأٌ سابقٌ أنهى التطبيق */
 					if (_type != IREventType::OnTap) return;
 					auto it = _graphicsHandlers_.find(_expr);
 					if (it == _graphicsHandlers_.end()) return;
@@ -303,32 +347,41 @@ static AlifObject* graphics_run(AlifObject* _module, AlifObject* _args, AlifObje
 					/* نستعيد القفلَ لنداءِ ألف، ثمّ نُطلِقه ثانيةً */
 					ALIF_BLOCK_THREADS
 
-					/* المعالِجُ نفسُه سيُمحى مع الجيل القديم، فنُمسكه أوّلاً */
 					AlifObject* handler = ALIF_NEWREF(it->second);
 					AlifObject* noArgs = alifTuple_new(0);
 					AlifObject* result = (noArgs == nullptr) ? nullptr
 					                   : alifObject_callObject(handler, noArgs);
 					ALIF_XDECREF(noArgs);
-					if (result == nullptr) { failed = true; window.close(); }
+					if (result == nullptr) { stopping = true; window.close(); }
 					else {
 						ALIF_DECREF(result);
 						if (isCallable(source)) {
-							/* جيلٌ جديد: نُخلي السجلَّ فتُسجَّل معالِجاتُ الشجرة
-							   الجديدة وحدَها، ثمّ نُسقط مراجعَ الجيل السابق. */
-							auto previous = std::move(_graphicsHandlers_);
-							_graphicsHandlers_.clear();
-
 							AlifObject* newRef = nullptr;
 							NodePtr newTree = buildTree(_module, source, &newRef, "تشغيل_تطبيق");
-							if (newTree == nullptr) { failed = true; window.close(); }
+							if (newTree == nullptr) { stopping = true; window.close(); }
+							else if (newTree == liveTree) {
+								/* الدالّةُ أعادت العنصرَ نفسَه: `diff` لن يجد فرقاً
+								   أبداً فتتجمّد الواجهةُ صامتةً. نُبلِّغ بدل الصمت. */
+								alifErr_setString(_alifExcRuntimeError_,
+									"تشغيل_تطبيق: دالّةُ البناءِ أعادت العنصرَ ذاتَه — "
+									"ابنِ عناصرَ جديدةً في كلّ نداء");
+								stopping = true; window.close();
+							}
 							else {
 								auto d = reconciler.diff(liveTree, newTree);
-								if (!d.isEmpty() and reconciler.patch(liveTree, d)) {
-									window.applyPatches(d.size(), needsRelayout(d));
+								if (!d.isEmpty()) {
+									bool structural = isStructural(d);
+									if (reconciler.patch(liveTree, d)) {
+										/* `patch` يُعيد ربطَ liveTree حين تكون الرقعةُ
+										   استبدالَ جذرٍ (`reconciler.cpp:537`)، فالنافذةُ
+										   تبقى ممسكةً بالجذر القديم. و`setContent` يُصلح
+										   هذا ويُصفّر مراجعَ الفأرة معاً. */
+										if (structural) window.setContent(liveTree);
+										else window.applyPatches(d.size(), false);
+									}
 								}
 								ALIF_XDECREF(newRef);
 							}
-							for (auto& kv : previous) ALIF_XDECREF(kv.second);
 						}
 					}
 					ALIF_DECREF(handler);
@@ -343,10 +396,11 @@ static AlifObject* graphics_run(AlifObject* _module, AlifObject* _args, AlifObje
 		ALIF_END_ALLOW_THREADS
 	}
 
+	_graphicsRunning_ = false;
 	ALIF_XDECREF(liveRef);
 	clearHandlers();
 
-	if (failed) return nullptr;   /* الاستثناءُ مضبوطٌ من نداءِ ألف */
+	if (stopping) return nullptr;   /* الاستثناءُ مضبوطٌ من نداءِ ألف */
 	if (!ok) {
 		alifErr_setString(_alifExcRuntimeError_, "تشغيل_تطبيق: تعذّر إنشاءُ النافذة");
 		return nullptr;
@@ -366,7 +420,7 @@ static AlifObject* graphics_snapshot(AlifObject* _module, AlifObject* _args) {
 	NodePtr root = buildTree(_module, rootObj, &keep, "رسم_ولقطة");
 	if (root == nullptr) return nullptr;
 	std::string path;
-	if (!asUTF8(pathObj, &path)) return nullptr;
+	if (!asUTF8(pathObj, &path)) { ALIF_XDECREF(keep); return nullptr; }
 
 	bool ok = false;
 	{
