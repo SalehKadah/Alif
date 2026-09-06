@@ -20,6 +20,11 @@ BUILT="$ROOT/$1"
 PKG="$(mktemp -d)"
 trap 'rm -rf "$PKG"' EXIT
 cp "$BUILT" "$PKG/"
+# المكتباتُ المشتركةُ المجاورةُ للمُنفَّذ جزءٌ من الحزمة كما تُشحن:
+# منذ صارت SDL2 تبعيّةً، المُنفَّذُ وحدَه لا يعمل (‏exit 127).
+for lib in "$(dirname "$BUILT")"/*.dll "$(dirname "$BUILT")"/*.so*; do
+	[ -e "$lib" ] && cp "$lib" "$PKG/"
+done
 cp -r "$ROOT/library" "$ROOT/examples" "$PKG/"
 ALIF="$PKG/$(basename "$BUILT")"
 chmod +x "$ALIF" 2>/dev/null || true
@@ -41,6 +46,9 @@ EXAMPLES="$(cd "$ROOT" && git -c core.quotepath=false ls-files 'examples/*.alif'
 cd "$PKG" || exit 2
 while IFS= read -r f; do
 	[ -n "$f" ] && [ -e "examples/$f" ] || continue
+	# أمثلةُ الرسومات تفتح نافذةً وتحجز الخيطَ حتّى يُغلقها المستخدم،
+	# فلا تصلح في عدّاءٍ بلا يد. تُغطّيها tests/graphics بلقطاتٍ لا تحجب.
+	case "$f" in رسومات_*) echo "  [متروك] $f — تفاعليّ"; continue;; esac
 	printf '%s' "$FEED" | "$ALIF" "examples/$f" > out.txt 2>&1
 	rc=$?
 	if [ $rc -eq 0 ]; then
