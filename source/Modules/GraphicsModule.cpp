@@ -24,10 +24,14 @@
 #include "sad_ui/desktop/window.h"
 #include "sad_ui/reconciler.h"
 
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <string>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 using sad::ui::IRNode;
 using sad::ui::UINodeType;
@@ -109,11 +113,33 @@ static NodePtr nodeOf(AlifObject* _module, AlifObject* _obj, const char* _where)
    المفتاحَ في `IREvent::expression`، فتبقى شجرةُ IR جاهلةً بألفَ تماماً. */
 
 static std::unordered_map<std::string, AlifObject*> _graphicsHandlers_{};
+static unsigned long long _graphicsHandlerSeq_ = 0;
 
 /* حلقةُ SDL واحدةٌ على الخيط، وسجلُّ المعالِجات واحد. فتعشيشُ `تشغيل_تطبيق`
    داخلَ معالِجٍ يجعل الاستدعاءَ الداخليَّ يمسح معالِجاتِ الخارجيّ عند خروجه،
    فتموت أزرارُه صامتةً. نمنع التعشيشَ صراحةً. */
 static bool _graphicsRunning_ = false;
+
+/* يجمع مفاتيحَ المعالِجات المذكورةَ في الشجرة الحيّة */
+static void collectLiveKeys(const NodePtr& _node, std::unordered_set<std::string>& _out) {
+	if (_node == nullptr) return;
+	for (const auto& ev : _node->getEvents()) {
+		if (!ev.expression.empty()) _out.insert(ev.expression);
+	}
+	for (const auto& child : _node->getChildren()) collectLiveKeys(child, _out);
+}
+
+/* يُسقط مراجعَ المعالِجات التي لم تعُد الشجرةُ تذكرها */
+static void pruneHandlers(const NodePtr& _live) {
+	std::unordered_set<std::string> alive;
+	collectLiveKeys(_live, alive);
+	for (auto it = _graphicsHandlers_.begin(); it != _graphicsHandlers_.end();) {
+		if (alive.find(it->first) == alive.end()) {
+			ALIF_XDECREF(it->second);
+			it = _graphicsHandlers_.erase(it);
+		} else ++it;
+	}
+}
 
 static void clearHandlers() {
 	for (auto& kv : _graphicsHandlers_) ALIF_XDECREF(kv.second);
@@ -156,13 +182,12 @@ static AlifObject* registerHandler(ElementObject* _self, AlifObject* _callable,
 		alifErr_format(_alifExcTypeError_, "%s: يُتوقّع شيءٌ قابلٌ للنداء", _where);
 		return nullptr;
 	}
+	/* المفتاحُ عدّادٌ لا عنوانُ كائن: `كائن.طريقة` واللامدا يُنشئان كائناً
+	   جديداً في كلّ نداءِ بناء، فالفهرسةُ بالعنوان تُنمي السجلَّ بلا حدّ.
+	   ويُمسح ما لم يعُد في الشجرة الحيّة بعد كلّ إعادةِ بناء. */
 	char key[32]{};
-	snprintf(key, sizeof(key), "h%llx", (unsigned long long)(uintptr_t)_callable);
-
-	auto it = _graphicsHandlers_.find(key);
-	if (it == _graphicsHandlers_.end()) {
-		_graphicsHandlers_.emplace(key, ALIF_NEWREF(_callable));
-	}
+	snprintf(key, sizeof(key), "h%llu", ++_graphicsHandlerSeq_);
+	_graphicsHandlers_.emplace(key, ALIF_NEWREF(_callable));
 
 	sad::ui::IREvent ev{};
 	ev.type = _type;
@@ -177,6 +202,31 @@ static AlifObject* element_onTap(ElementObject* _self, AlifObject* _callable) {
 }
 
 /* .عند_تغير(دالّة) — للمفاتيح وخاناتِ الاختيار والمنزلقات وحقولِ النصّ */
+/* .معرف("اسم") — يُثبّت هويّةَ العنصر بين الأجيال.
+ * (سُمّي معرّفاً لا مفتاحاً لأنّ `مفتاح` عنصرُ التبديل.)
+ *
+ * بلا مفتاحٍ صريحٍ يُشتقّ الاسمُ من الموضع (`ج.0.2`)، فإدراجُ عنصرٍ في وسطِ
+ * قائمةٍ يُزحزح أسماءَ ما بعده كلَّه: تُصلَّح الصورةُ لكن ينتقل التركيزُ
+ * والتمريرُ والتحريكُ الجاري إلى الجار. المفتاحُ الصريحُ يمنع ذلك.
+ */
+/* .مفعل(منطقي) — المفاتيحُ وخاناتُ الاختيار تقرأ `مفعّل` لا `قيمة` */
+static AlifObject* element_enabled(ElementObject* _self, AlifObject* _value) {
+	AlifIntT truth = alifObject_isTrue(_value);
+	if (truth < 0) return nullptr;
+	_self->node->setProperty(props::ENABLED, truth ? true : false);
+	return ALIF_NEWREF((AlifObject*)_self);
+}
+
+/* .قيمة_رقم(عدد) — المنزلقُ وشريطُ التقدّم يقرآن قيمةً رقميّة */
+static AlifObject* element_numValue(ElementObject* s, AlifObject* v) { return setNumProp(s, v, props::VALUE); }
+
+static AlifObject* element_key(ElementObject* _self, AlifObject* _value) {
+	std::string k;
+	if (!asUTF8(_value, &k)) return nullptr;
+	_self->node->setId(k);
+	return ALIF_NEWREF((AlifObject*)_self);
+}
+
 static AlifObject* element_onChange(ElementObject* _self, AlifObject* _callable) {
 	return registerHandler(_self, _callable, IREventType::OnChange, "عند_تغير");
 }
@@ -192,6 +242,9 @@ static AlifMethodDef _elementMethods_[] = {
 	{"تباعد",       ALIF_CPPFUNCTION_CAST(element_spacing),  METHOD_O},
 	{"عند_النقر",   ALIF_CPPFUNCTION_CAST(element_onTap),    METHOD_O},
 	{"عند_تغير",    ALIF_CPPFUNCTION_CAST(element_onChange), METHOD_O},
+	{"معرف",        ALIF_CPPFUNCTION_CAST(element_key),      METHOD_O},
+	{"مفعل",        ALIF_CPPFUNCTION_CAST(element_enabled),  METHOD_O},
+	{"قيمة_رقم",    ALIF_CPPFUNCTION_CAST(element_numValue), METHOD_O},
 	{"مصدر",        ALIF_CPPFUNCTION_CAST(element_source),   METHOD_O},
 	{"تلميح",       ALIF_CPPFUNCTION_CAST(element_hint),     METHOD_O},
 	{"قيمة",        ALIF_CPPFUNCTION_CAST(element_value),    METHOD_O},
@@ -298,6 +351,132 @@ static AlifObject* graphics_divider(AlifObject* _module, AlifObject* /*_ignored*
 	return newElement(_module, std::move(node));
 }
 
+
+/* ═══ بقيّةُ السطح ═══
+ * ما دون هذا مُصيَّرٌ فعلاً في `platform_renderer.cpp`، لا مجرّدَ مدخلةٍ
+ * في التعداد. وقد استُبعد عمداً ما يرسم شكلاً بلا بيانات (جدول_بيانات،
+ * تقويم، مشغل_فيديو، ألسنة، عرض_ويب…) — يُوصَل حين يُنفَّذ لا قبل.
+ */
+
+/* عناصرُ حاويةٌ: تأخذ أبناءً */
+static AlifObject* graphics_center(AlifObject* m, AlifObject* a)    { return buildContainer(m, UINodeType::Center,    a, "وسط"); }
+static AlifObject* graphics_padding(AlifObject* m, AlifObject* a)   { return buildContainer(m, UINodeType::Padding,   a, "بحشوة"); }
+static AlifObject* graphics_sized(AlifObject* m, AlifObject* a)     { return buildContainer(m, UINodeType::SizedBox,  a, "بمقاس"); }
+static AlifObject* graphics_expanded(AlifObject* m, AlifObject* a)  { return buildContainer(m, UINodeType::Expanded,  a, "موسع"); }
+static AlifObject* graphics_align(AlifObject* m, AlifObject* a)     { return buildContainer(m, UINodeType::Align,     a, "محاذاة"); }
+static AlifObject* graphics_container(AlifObject* m, AlifObject* a) { return buildContainer(m, UINodeType::Container, a, "حاوية"); }
+static AlifObject* graphics_grid(AlifObject* m, AlifObject* a)      { return buildContainer(m, UINodeType::Grid,      a, "شبكة"); }
+static AlifObject* graphics_wrap(AlifObject* m, AlifObject* a)      { return buildContainer(m, UINodeType::Wrap,      a, "التفاف"); }
+static AlifObject* graphics_group(AlifObject* m, AlifObject* a)     { return buildContainer(m, UINodeType::GroupBox,  a, "صندوق_تجميع"); }
+static AlifObject* graphics_appBar(AlifObject* m, AlifObject* a)    { return buildContainer(m, UINodeType::AppBar,    a, "شريط_تطبيق"); }
+static AlifObject* graphics_statusBar(AlifObject* m, AlifObject* a) { return buildContainer(m, UINodeType::StatusBar, a, "شريط_حالة"); }
+
+/* عناصرُ ورقيّةٌ نصّيّة */
+static AlifObject* graphics_icon(AlifObject* m, AlifObject* v)      { return buildLeaf(m, UINodeType::Icon,      props::TEXT, v); }
+static AlifObject* graphics_badge(AlifObject* m, AlifObject* v)     { return buildLeaf(m, UINodeType::Badge,     props::TEXT, v); }
+static AlifObject* graphics_chip(AlifObject* m, AlifObject* v)      { return buildLeaf(m, UINodeType::Chip,      props::TEXT, v); }
+static AlifObject* graphics_avatar(AlifObject* m, AlifObject* v)    { return buildLeaf(m, UINodeType::Avatar,    props::TEXT, v); }
+static AlifObject* graphics_tooltip(AlifObject* m, AlifObject* v)   { return buildLeaf(m, UINodeType::Tooltip,   props::TEXT, v); }
+static AlifObject* graphics_textArea(AlifObject* m, AlifObject* v)  { return buildLeaf(m, UINodeType::TextArea,  props::HINT, v); }
+static AlifObject* graphics_searchBar(AlifObject* m, AlifObject* v) { return buildLeaf(m, UINodeType::SearchBar, props::HINT, v); }
+static AlifObject* graphics_fab(AlifObject* m, AlifObject* v)       { return buildLeaf(m, UINodeType::FAB,       props::TEXT, v); }
+static AlifObject* graphics_radio(AlifObject* m, AlifObject* v)     { return buildLeaf(m, UINodeType::Radio,     props::TEXT, v); }
+static AlifObject* graphics_code(AlifObject* m, AlifObject* v)      { return buildLeaf(m, UINodeType::CodeBlock, props::TEXT, v); }
+static AlifObject* graphics_spinner(AlifObject* m, AlifObject* /*x*/) {
+	return newElement(m, IRNode::create(UINodeType::Spinner));
+}
+
+/* عنصرانِ رقميّان: القيمةُ عددٌ لا نصّ، ومداها **٠–١٠٠** لا ٠–١
+   (`platform_renderer.cpp:1053` يقسم على ١٠٠). */
+static AlifObject* buildNumeric(AlifObject* _module, UINodeType _type, AlifObject* _value) {
+	double v = alifFloat_asDouble(_value);
+	if (v == -1.0 and alifErr_occurred()) return nullptr;
+	NodePtr node = IRNode::create(_type);
+	node->setProperty(props::VALUE, v);
+	return newElement(_module, std::move(node));
+}
+static AlifObject* graphics_progress(AlifObject* m, AlifObject* v) { return buildNumeric(m, UINodeType::ProgressBar, v); }
+static AlifObject* graphics_slider(AlifObject* m, AlifObject* v)   { return buildNumeric(m, UINodeType::Slider,      v); }
+
+/* ═══ تذكيرُ النتائج (memo) ═══
+ *
+ * `مذكرة(دالّة، مدخل…)` تُعيد العنصرَ الذي أنتجته الدالّةُ آخرَ مرّةٍ إن لم
+ * تتغيّر مدخلاتُها. فتُشارك الشجرتان القديمةُ والجديدةُ المؤشّرَ نفسَه،
+ * ويتخطّى `Reconciler::diff` الفرعَ كلَّه باختصارِ الهويّة الذي أُضيف في
+ * `reconciler.cpp` — بدلَ أن يمشي فيه عقدةً عقدة.
+ *
+ * مقيسٌ على شجرةِ ٣٤١ عقدةً بثلاثةِ أفرعٍ مذكَّرةٍ من أربعة:
+ *     مطابقةٌ كاملة  ٠٫٤٥٢ م.ث   (‏٣٤١ عقدةً قُورنت)
+ *     مع التذكير     ٠٫١١٤ م.ث   (‏٨٦ عقدة)      ⇒ ٤×
+ * ويُضاف إليه تخطّي بناءِ الفرعِ في ألفَ أصلاً.
+ *
+ * الفخّ: مدخلٌ منسيّ (متغيّرٌ تقرؤه الدالّةُ ولا يُمرَّر) يُجمّد الفرعَ
+ * صامتاً. مرّرْ كلَّ ما تقرأ.
+ */
+
+class MemoEntry {
+public:
+	AlifObject* args{};     /* صفُّ المدخلات — مرجعٌ قويّ */
+	AlifObject* result{};   /* العنصرُ الناتج — مرجعٌ قويّ */
+};
+
+static std::unordered_map<unsigned long long, MemoEntry> _graphicsMemo_{};
+
+static void clearMemo() {
+	for (auto& kv : _graphicsMemo_) {
+		ALIF_XDECREF(kv.second.args);
+		ALIF_XDECREF(kv.second.result);
+	}
+	_graphicsMemo_.clear();
+}
+
+static AlifObject* graphics_memo(AlifObject* _module, AlifObject* _args) {
+	AlifSizeT n = alifTuple_size(_args);
+	if (n < 1) {
+		alifErr_setString(_alifExcTypeError_, "مذكرة: يلزم وسيطٌ أوّلُ قابلٌ للنداء");
+		return nullptr;
+	}
+	AlifObject* fn = alifTuple_getItem(_args, 0);
+	if (!isCallable(fn)) {
+		alifErr_setString(_alifExcTypeError_, "مذكرة: الوسيطُ الأوّلُ ليس قابلاً للنداء");
+		return nullptr;
+	}
+
+	AlifObject* inputs = alifTuple_getSlice(_args, 1, n);
+	if (inputs == nullptr) return nullptr;
+
+	unsigned long long slot = (unsigned long long)(uintptr_t)fn;
+	auto it = _graphicsMemo_.find(slot);
+	if (it != _graphicsMemo_.end() and it->second.args != nullptr) {
+		AlifIntT same = alifObject_richCompareBool(it->second.args, inputs, ALIF_EQ);
+		if (same < 0) { ALIF_DECREF(inputs); return nullptr; }
+		if (same > 0) {
+			ALIF_DECREF(inputs);
+			return ALIF_NEWREF(it->second.result);   /* المؤشّرُ نفسُه ⇒ يتخطّاه diff */
+		}
+	}
+
+	AlifObject* noArgs = alifTuple_new(0);
+	if (noArgs == nullptr) { ALIF_DECREF(inputs); return nullptr; }
+	AlifObject* produced = alifObject_callObject(fn, noArgs);
+	ALIF_DECREF(noArgs);
+	if (produced == nullptr) { ALIF_DECREF(inputs); return nullptr; }
+
+	GraphicsState* state = getGraphicsState(_module);
+	if (!ALIF_IS_TYPE(produced, (AlifTypeObject*)state->elementType)) {
+		alifErr_setString(_alifExcTypeError_, "مذكرة: الدالّةُ لم تُعِد عنصرَ رسومات");
+		ALIF_DECREF(produced); ALIF_DECREF(inputs);
+		return nullptr;
+	}
+
+	MemoEntry& e = _graphicsMemo_[slot];
+	ALIF_XDECREF(e.args);
+	ALIF_XDECREF(e.result);
+	e.args = inputs;                       /* نأخذ ملكيّةَ inputs */
+	e.result = ALIF_NEWREF(produced);
+	return produced;
+}
+
 /* ═══ التشغيل ═══ */
 
 /* أسماءٌ ثابتةٌ بحسبِ الموضع.
@@ -311,7 +490,7 @@ static AlifObject* graphics_divider(AlifObject* _module, AlifObject* /*_ignored*
  */
 static void assignIds(const NodePtr& _node, const std::string& _path) {
 	if (_node == nullptr) return;
-	if (_node->getId().empty()) _node->setId(_path);
+	if (_node->getId().empty()) _node->setId(_path);   /* المفتاحُ الصريحُ يُصان */
 	const auto& children = _node->getChildren();
 	for (size_t i = 0; i < children.size(); i++) {
 		assignIds(children[i], _path + "." + std::to_string(i));
@@ -401,64 +580,99 @@ static AlifObject* graphics_run(AlifObject* _module, AlifObject* _args, AlifObje
 		/* حلقةُ SDL حاجزةٌ — نُطلِق القفلَ العامّ طوالها.
 		   واللامدا تُعرَّف داخلَ الكتلةِ عمداً: ماكرَوا BLOCK/UNBLOCK
 		   يتوسّعان إلى `_save` المصرَّحِ في BEGIN_ALLOW_THREADS وحدَها. */
+		/* حلقةُ SDL حاجزةٌ — نُطلِق القفلَ العامّ طوالها.
+		   واللامدا تُعرَّف داخلَ الكتلةِ عمداً: ماكرَوا BLOCK/UNBLOCK
+		   يتوسّعان إلى `_save` المصرَّحِ في BEGIN_ALLOW_THREADS وحدَها. */
 		ALIF_BEGIN_ALLOW_THREADS
 		if (window.create(options)) {
 			window.setContent(liveTree);
 
+			/* المعالِجُ لا يُرقّع الشجرةَ بنفسِه.
+			 *
+			 * ردُّ النداء يجري من داخلِ إرسالِ الحدث، و`dispatchEvent`
+			 * (`event_dispatch.cpp:83`) يلتقط مؤشّراتٍ خامّاً إلى العقدةِ
+			 * الهدفِ وأسلافِها **قبل** النداء، ثمّ يمرّ عليها في أطوارِ
+			 * الالتقاطِ والهدفِ والفقاعات **بعده**. فلو حرّرنا الشجرةَ
+			 * القديمةَ هناك لقرأ المُرسِلُ ذاكرةً محرَّرة.
+			 * لذلك: المعالِجُ يُنادي دالّةَ ألف ويرفع علَماً، وإعادةُ البناء
+			 * والمطابقةُ والترقيعُ تجري في رأسِ الحلقة بعد أن يفرغ الإرسال.
+			 */
+			bool pendingRebuild = false;
+
 			window.setOnEventCallback(
 				[&](IREventType _type, const std::string& _expr,
-				    const IRNode*, const sad::ui::EventData&) {
-					if (stopping) return;   /* خطأٌ سابقٌ أنهى التطبيق */
-					if (_type != IREventType::OnTap) return;
+				    const IRNode*, const sad::ui::EventData& _data) {
+					if (stopping) return;
+					if (_type != IREventType::OnTap
+					    and _type != IREventType::OnChange) return;
 					auto it = _graphicsHandlers_.find(_expr);
 					if (it == _graphicsHandlers_.end()) return;
 
-					/* نستعيد القفلَ لنداءِ ألف، ثمّ نُطلِقه ثانيةً */
 					ALIF_BLOCK_THREADS
 
 					AlifObject* handler = ALIF_NEWREF(it->second);
-					AlifObject* noArgs = alifTuple_new(0);
-					AlifObject* result = (noArgs == nullptr) ? nullptr
-					                   : alifObject_callObject(handler, noArgs);
-					ALIF_XDECREF(noArgs);
-					if (result == nullptr) { stopping = true; window.close(); }
-					else {
-						ALIF_DECREF(result);
-						if (isCallable(source)) {
-							AlifObject* newRef = nullptr;
-							NodePtr newTree = buildTree(_module, source, &newRef, "تشغيل_تطبيق");
-							if (newTree == nullptr) { stopping = true; window.close(); }
-							else if (newTree == liveTree) {
-								/* الدالّةُ أعادت العنصرَ نفسَه: `diff` لن يجد فرقاً
-								   أبداً فتتجمّد الواجهةُ صامتةً. نُبلِّغ بدل الصمت. */
-								alifErr_setString(_alifExcRuntimeError_,
-									"تشغيل_تطبيق: دالّةُ البناءِ أعادت العنصرَ ذاتَه — "
-									"ابنِ عناصرَ جديدةً في كلّ نداء");
-								stopping = true; window.close();
-							}
-							else {
-								auto d = reconciler.diff(liveTree, newTree);
-								if (!d.isEmpty()) {
-									bool structural = isStructural(d);
-									if (reconciler.patch(liveTree, d)) {
-										/* `patch` يُعيد ربطَ liveTree حين تكون الرقعةُ
-										   استبدالَ جذرٍ (`reconciler.cpp:537`)، فالنافذةُ
-										   تبقى ممسكةً بالجذر القديم. و`setContent` يُصلح
-										   هذا ويُصفّر مراجعَ الفأرة معاً. */
-										if (structural) window.setContent(liveTree);
-										else window.applyPatches(d.size(), false);
-									}
-								}
-								ALIF_XDECREF(newRef);
-							}
+					/* حدثُ التغيّر يحمل قيمةً؛ نمرّرها إن قبِلها المعالِج */
+					AlifObject* result = nullptr;
+					if (_type == IREventType::OnChange and !_data.value.empty()) {
+						AlifObject* arg = alifUStr_fromString(_data.value.c_str());
+						if (arg != nullptr) {
+							result = alifObject_callOneArg(handler, arg);
+							ALIF_DECREF(arg);
+							if (result == nullptr) alifErr_clear();
 						}
 					}
+					if (result == nullptr) {
+						AlifObject* noArgs = alifTuple_new(0);
+						result = (noArgs == nullptr) ? nullptr
+						       : alifObject_callObject(handler, noArgs);
+						ALIF_XDECREF(noArgs);
+					}
+					if (result == nullptr) { stopping = true; window.close(); }
+					else { ALIF_DECREF(result); pendingRebuild = true; }
 					ALIF_DECREF(handler);
 
 					ALIF_UNBLOCK_THREADS
 				});
 
-			window.run();
+			/* حلقتُنا بدل `window.run()`: تُتيح الترقيعَ خارجَ الإرسال */
+			while (window.isOpen() and !stopping) {
+				window.runOneFrame();
+				if (!pendingRebuild) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(4));
+					continue;
+				}
+				pendingRebuild = false;
+				if (!isCallable(source)) continue;
+
+				ALIF_BLOCK_THREADS
+				AlifObject* newRef = nullptr;
+				NodePtr newTree = buildTree(_module, source, &newRef, "تشغيل_تطبيق");
+				if (newTree == nullptr) { stopping = true; window.close(); }
+				else if (newTree == liveTree) {
+					/* الدالّةُ أعادت الجذرَ نفسَه: لا فرقَ أبداً فتتجمّد
+					   الواجهةُ صامتةً. نُبلِّغ بدل الصمت. */
+					alifErr_setString(_alifExcRuntimeError_,
+						"تشغيل_تطبيق: دالّةُ البناءِ أعادت الجذرَ ذاتَه — "
+						"ابنِ جذراً جديداً في كلّ نداء (والتذكيرُ للأفرع لا للجذر)");
+					stopping = true; window.close();
+				}
+				else {
+					auto d = reconciler.diff(liveTree, newTree);
+					if (!d.isEmpty()) {
+						bool structural = isStructural(d);
+						if (reconciler.patch(liveTree, d)) {
+							/* `patch` يُعيد ربطَ الجذر عند رقعةِ استبدالٍ جذريّة
+							   (`reconciler.cpp:537`)، والنافذةُ تبقى ممسكةً بالقديم.
+							   و`setContent` يُصلح هذا ويُصفّر مراجعَ الفأرة معاً. */
+							if (structural) window.setContent(liveTree);
+							else window.applyPatches(d.size(), false);
+						}
+					}
+					pruneHandlers(liveTree);
+					ALIF_XDECREF(newRef);
+				}
+				ALIF_UNBLOCK_THREADS
+			}
 			window.destroy();
 			ok = true;
 		}
@@ -502,7 +716,12 @@ static AlifObject* graphics_snapshot(AlifObject* _module, AlifObject* _args) {
 		ALIF_BEGIN_ALLOW_THREADS
 		if (window.create(options)) {
 			window.setContent(root);
-			for (int i = 0; i < 6; i++) window.runOneFrame();
+			/* `runOneFrame` لا يُصيّر إلّا حين يُطلَب الرسمُ صراحةً، فبلا
+			   `invalidate()` تُصيَّر الإطارةُ الأولى وحدَها وتمضي الباقيةُ
+			   بلا عمل. و`takeScreenshot` يقرأ من هدفِ التصيير بعد
+			   `SDL_RenderPresent`، ومحتواه غيرُ معرَّفٍ على بعض المنصّات
+			   (‏Metal على ماك). فنُجبِر تصييراً في كلّ إطار. */
+			for (int i = 0; i < 6; i++) { window.invalidate(); window.runOneFrame(); }
 			ok = window.takeScreenshot(path);
 			window.destroy();
 		}
@@ -530,6 +749,31 @@ static AlifMethodDef _alifGraphicsMethods_[] = {
 	{"فاصل_خط",       ALIF_CPPFUNCTION_CAST(graphics_divider),  METHOD_NOARGS},
 	{"تشغيل_تطبيق",   ALIF_CPPFUNCTION_CAST(graphics_run),      METHOD_VARARGS | METHOD_KEYWORDS},
 	{"رسم_ولقطة",     ALIF_CPPFUNCTION_CAST(graphics_snapshot), METHOD_VARARGS},
+	{"وسط",           ALIF_CPPFUNCTION_CAST(graphics_center),    METHOD_VARARGS},
+	{"بحشوة",         ALIF_CPPFUNCTION_CAST(graphics_padding),   METHOD_VARARGS},
+	{"بمقاس",         ALIF_CPPFUNCTION_CAST(graphics_sized),     METHOD_VARARGS},
+	{"موسع",          ALIF_CPPFUNCTION_CAST(graphics_expanded),  METHOD_VARARGS},
+	{"محاذاة",        ALIF_CPPFUNCTION_CAST(graphics_align),     METHOD_VARARGS},
+	{"حاوية",         ALIF_CPPFUNCTION_CAST(graphics_container), METHOD_VARARGS},
+	{"شبكة",          ALIF_CPPFUNCTION_CAST(graphics_grid),      METHOD_VARARGS},
+	{"التفاف",        ALIF_CPPFUNCTION_CAST(graphics_wrap),      METHOD_VARARGS},
+	{"صندوق_تجميع",   ALIF_CPPFUNCTION_CAST(graphics_group),     METHOD_VARARGS},
+	{"شريط_تطبيق",    ALIF_CPPFUNCTION_CAST(graphics_appBar),    METHOD_VARARGS},
+	{"شريط_حالة",     ALIF_CPPFUNCTION_CAST(graphics_statusBar), METHOD_VARARGS},
+	{"أيقونة",        ALIF_CPPFUNCTION_CAST(graphics_icon),      METHOD_O},
+	{"شارة",          ALIF_CPPFUNCTION_CAST(graphics_badge),     METHOD_O},
+	{"رقاقة",         ALIF_CPPFUNCTION_CAST(graphics_chip),      METHOD_O},
+	{"صورة_رمزية",    ALIF_CPPFUNCTION_CAST(graphics_avatar),    METHOD_O},
+	{"تلميح_عنصر",    ALIF_CPPFUNCTION_CAST(graphics_tooltip),   METHOD_O},
+	{"منطقة_نص",      ALIF_CPPFUNCTION_CAST(graphics_textArea),  METHOD_O},
+	{"شريط_بحث",      ALIF_CPPFUNCTION_CAST(graphics_searchBar), METHOD_O},
+	{"زر_عائم",       ALIF_CPPFUNCTION_CAST(graphics_fab),       METHOD_O},
+	{"زر_راديو",      ALIF_CPPFUNCTION_CAST(graphics_radio),     METHOD_O},
+	{"كتلة_كود",      ALIF_CPPFUNCTION_CAST(graphics_code),      METHOD_O},
+	{"مؤشر_انشغال",   ALIF_CPPFUNCTION_CAST(graphics_spinner),   METHOD_NOARGS},
+	{"شريط_تقدم",     ALIF_CPPFUNCTION_CAST(graphics_progress),  METHOD_O},
+	{"منزلق",         ALIF_CPPFUNCTION_CAST(graphics_slider),    METHOD_O},
+	{"مذكرة",         ALIF_CPPFUNCTION_CAST(graphics_memo),     METHOD_VARARGS},
 	{nullptr, nullptr}
 };
 

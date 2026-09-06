@@ -162,6 +162,14 @@ namespace sad
                                    std::vector<size_t> &currentPath,
                                    DiffResult &result)
         {
+            // (AR) [محراب] اختصارُ الهويّة: عقدتان بمؤشّرٍ واحدٍ لا فرقَ بينهما.
+            //      يفتح هذا بابَ تذكيرِ النتائج (memo): فرعٌ لم تتغيّر مدخلاتُه
+            //      يُعاد كما هو، فتتخطّاه المطابقةُ كلَّها بدل أن تمشي فيه.
+            //      بلا هذا السطرِ لا يُوفّر التذكيرُ شيئاً على جانبِ المطابقة.
+            // (EN) Identity shortcut — enables memoization to skip whole subtrees.
+            if (oldNode == newNode)
+                return;
+
             result.stats.nodesCompared++;
 
             // ─── (AR) إذا اختلف النوع → استبدال كامل ───
