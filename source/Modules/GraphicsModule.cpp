@@ -144,16 +144,20 @@ static AlifObject* element_width(ElementObject* s, AlifObject* v)    { return se
 static AlifObject* element_height(ElementObject* s, AlifObject* v)   { return setNumProp(s, v, props::HEIGHT); }
 static AlifObject* element_padding(ElementObject* s, AlifObject* v)  { return setNumProp(s, v, props::PADDING); }
 static AlifObject* element_spacing(ElementObject* s, AlifObject* v)  { return setNumProp(s, v, props::SPACING); }
+static AlifObject* element_source(ElementObject* s, AlifObject* v)   { return setTextProp(s, v, props::SOURCE); }
+static AlifObject* element_hint(ElementObject* s, AlifObject* v)     { return setTextProp(s, v, props::HINT); }
+static AlifObject* element_value(ElementObject* s, AlifObject* v)    { return setTextProp(s, v, props::VALUE); }
+static AlifObject* element_borderColor(ElementObject* s, AlifObject* v) { return setTextProp(s, v, props::BORDER_COLOR); }
 
-/* .عند_النقر(دالّة) — تُسجّل المعالِجَ وتُعيد العنصرَ نفسَه */
-static AlifObject* element_onTap(ElementObject* _self, AlifObject* _callable) {
+/* مسجّلُ معالِجٍ عامٌّ — يُستعمل لِـ`عند_النقر` و`عند_تغير` */
+static AlifObject* registerHandler(ElementObject* _self, AlifObject* _callable,
+                                   IREventType _type, const char* _where) {
 	if (!isCallable(_callable)) {
-		alifErr_setString(_alifExcTypeError_, "عند_النقر: يُتوقّع شيءٌ قابلٌ للنداء");
+		alifErr_format(_alifExcTypeError_, "%s: يُتوقّع شيءٌ قابلٌ للنداء", _where);
 		return nullptr;
 	}
 	char key[32]{};
-	snprintf(key, sizeof(key), "h%llx",
-	         (unsigned long long)(uintptr_t)_callable);
+	snprintf(key, sizeof(key), "h%llx", (unsigned long long)(uintptr_t)_callable);
 
 	auto it = _graphicsHandlers_.find(key);
 	if (it == _graphicsHandlers_.end()) {
@@ -161,10 +165,20 @@ static AlifObject* element_onTap(ElementObject* _self, AlifObject* _callable) {
 	}
 
 	sad::ui::IREvent ev{};
-	ev.type = IREventType::OnTap;
+	ev.type = _type;
 	ev.expression = key;
 	_self->node->addEvent(ev);
 	return ALIF_NEWREF((AlifObject*)_self);
+}
+
+/* .عند_تغير(دالّة) — للمفاتيح وخاناتِ الاختيار والمنزلقات وحقولِ النصّ */
+static AlifObject* element_onTap(ElementObject* _self, AlifObject* _callable) {
+	return registerHandler(_self, _callable, IREventType::OnTap, "عند_النقر");
+}
+
+/* .عند_تغير(دالّة) — للمفاتيح وخاناتِ الاختيار والمنزلقات وحقولِ النصّ */
+static AlifObject* element_onChange(ElementObject* _self, AlifObject* _callable) {
+	return registerHandler(_self, _callable, IREventType::OnChange, "عند_تغير");
 }
 
 static AlifMethodDef _elementMethods_[] = {
@@ -177,6 +191,11 @@ static AlifMethodDef _elementMethods_[] = {
 	{"حشوة",        ALIF_CPPFUNCTION_CAST(element_padding),  METHOD_O},
 	{"تباعد",       ALIF_CPPFUNCTION_CAST(element_spacing),  METHOD_O},
 	{"عند_النقر",   ALIF_CPPFUNCTION_CAST(element_onTap),    METHOD_O},
+	{"عند_تغير",    ALIF_CPPFUNCTION_CAST(element_onChange), METHOD_O},
+	{"مصدر",        ALIF_CPPFUNCTION_CAST(element_source),   METHOD_O},
+	{"تلميح",       ALIF_CPPFUNCTION_CAST(element_hint),     METHOD_O},
+	{"قيمة",        ALIF_CPPFUNCTION_CAST(element_value),    METHOD_O},
+	{"حد_لون",      ALIF_CPPFUNCTION_CAST(element_borderColor), METHOD_O},
 	{nullptr, nullptr}
 };
 
@@ -234,6 +253,50 @@ static AlifObject* graphics_button(AlifObject* _module, AlifObject* _value) {
 }
 
 static AlifObject* graphics_stack(AlifObject* m, AlifObject* a)  { return buildContainer(m, UINodeType::Stack,  a, "رصة"); }
+static AlifObject* graphics_card(AlifObject* m, AlifObject* a)   { return buildContainer(m, UINodeType::Card,   a, "بطاقة"); }
+static AlifObject* graphics_scroll(AlifObject* m, AlifObject* a) { return buildContainer(m, UINodeType::ScrollView, a, "لفافة"); }
+
+/* بنّاءُ عنصرٍ ورقيٍّ بخاصّيّةٍ نصّيّةٍ واحدة */
+static AlifObject* buildLeaf(AlifObject* _module, UINodeType _type,
+                             const char* _key, AlifObject* _value) {
+	std::string text;
+	AlifObject* asStr = nullptr;
+	if (!ALIFUSTR_CHECK(_value)) {
+		asStr = alifObject_str(_value);
+		if (asStr == nullptr) return nullptr;
+		_value = asStr;
+	}
+	if (!asUTF8(_value, &text)) { ALIF_XDECREF(asStr); return nullptr; }
+	ALIF_XDECREF(asStr);
+	NodePtr node = IRNode::create(_type);
+	node->setProperty(_key, text);
+	return newElement(_module, std::move(node));
+}
+
+static AlifObject* graphics_image(AlifObject* m, AlifObject* v)  { return buildLeaf(m, UINodeType::Image,     props::SOURCE, v); }
+static AlifObject* graphics_field(AlifObject* m, AlifObject* v)  { return buildLeaf(m, UINodeType::TextField, props::HINT,   v); }
+static AlifObject* graphics_toggle(AlifObject* m, AlifObject* v) { return buildLeaf(m, UINodeType::Toggle,    props::TEXT,   v); }
+static AlifObject* graphics_check(AlifObject* m, AlifObject* v)  { return buildLeaf(m, UINodeType::Checkbox,  props::TEXT,   v); }
+
+/* فاصلٌ مرن: `فاصل()` بلا وسائط، أو `فاصل(20)` بمقدارٍ ثابت */
+static AlifObject* graphics_spacer(AlifObject* _module, AlifObject* _args) {
+	double size = 0.0;
+	AlifObject* sizeObj = nullptr;
+	if (!alifArg_parseTuple(_args, "|O", &sizeObj)) return nullptr;
+	NodePtr node = IRNode::create(UINodeType::Spacer);
+	if (sizeObj != nullptr and sizeObj != ALIF_NONE) {
+		size = alifFloat_asDouble(sizeObj);
+		if (size == -1.0 and alifErr_occurred()) return nullptr;
+		node->setProperty(props::HEIGHT, size);
+		node->setProperty(props::WIDTH, size);
+	}
+	return newElement(_module, std::move(node));
+}
+
+static AlifObject* graphics_divider(AlifObject* _module, AlifObject* /*_ignored*/) {
+	NodePtr node = IRNode::create(UINodeType::Divider);
+	return newElement(_module, std::move(node));
+}
 
 /* ═══ التشغيل ═══ */
 
@@ -457,6 +520,14 @@ static AlifMethodDef _alifGraphicsMethods_[] = {
 	{"صف",            ALIF_CPPFUNCTION_CAST(graphics_row),      METHOD_VARARGS},
 	{"رصة",           ALIF_CPPFUNCTION_CAST(graphics_stack),    METHOD_VARARGS},
 	{"زر",            ALIF_CPPFUNCTION_CAST(graphics_button),   METHOD_O},
+	{"بطاقة",         ALIF_CPPFUNCTION_CAST(graphics_card),     METHOD_VARARGS},
+	{"لفافة",         ALIF_CPPFUNCTION_CAST(graphics_scroll),   METHOD_VARARGS},
+	{"صورة",          ALIF_CPPFUNCTION_CAST(graphics_image),    METHOD_O},
+	{"حقل_نص",        ALIF_CPPFUNCTION_CAST(graphics_field),    METHOD_O},
+	{"مفتاح",         ALIF_CPPFUNCTION_CAST(graphics_toggle),   METHOD_O},
+	{"خانة_اختيار",   ALIF_CPPFUNCTION_CAST(graphics_check),    METHOD_O},
+	{"فاصل",          ALIF_CPPFUNCTION_CAST(graphics_spacer),   METHOD_VARARGS},
+	{"فاصل_خط",       ALIF_CPPFUNCTION_CAST(graphics_divider),  METHOD_NOARGS},
 	{"تشغيل_تطبيق",   ALIF_CPPFUNCTION_CAST(graphics_run),      METHOD_VARARGS | METHOD_KEYWORDS},
 	{"رسم_ولقطة",     ALIF_CPPFUNCTION_CAST(graphics_snapshot), METHOD_VARARGS},
 	{nullptr, nullptr}
