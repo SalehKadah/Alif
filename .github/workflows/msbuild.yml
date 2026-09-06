@@ -67,3 +67,11 @@ jobs:
         shell: bash
         run: |
           bash .github/scripts/run_check.sh "winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe"
+
+      # البناءُ الأخضرُ لا يُثبت أنّ وحدةَ «رسومات» دخلت الثنائيَّ
+      - name: فحصُ وحدة الرسومات
+        shell: bash
+        run: |
+          echo 'استورد رسومات' > gfx_check.alif
+          echo 'اطبع("رسومات موجودة")' >> gfx_check.alif
+          "winBuild/x64/${{matrix.BUILD-CONFIGURATION}}/alif.exe" gfx_check.alif

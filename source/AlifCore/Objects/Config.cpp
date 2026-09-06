@@ -10,7 +10,9 @@ extern AlifObject* alifInit__random(void); // 41
 
 extern AlifObject* alifInit__io(void);
 
+#ifdef ALIF_WITH_GRAPHICS
 extern AlifObject* alifInit_graphics(void);
+#endif
 
 
 
@@ -34,7 +36,9 @@ class InitTable _alifImportInitTab_[] = { // 87
 
 	{"تبادل", alifInit__io},
 
+#ifdef ALIF_WITH_GRAPHICS
 	{"رسومات", alifInit_graphics},
+#endif
 
 	/* Sentinel */
 	{0, 0}

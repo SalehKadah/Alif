@@ -1,3 +1,9 @@
+/* الوحدةُ تُبنى فقط حين تتوفّر SDL2 و SDL2_ttf.
+ * على ويندوز يُعرَّف ALIF_WITH_GRAPHICS في vcxproj، وعلى لينكس/ماك في
+ * Makefile بعد كشفِ المكتبتَين بـpkg-config. وبدونه يُصرَّف هذا الملفُّ
+ * إلى لا شيء، فتبقى ألفُ كما كانت. */
+#ifdef ALIF_WITH_GRAPHICS
+
 /* وحدةُ الرسومات — جسرُ ألف إلى مكتبة sad_ui
  *
  * تُحوِّل كائناتِ ألف إلى شجرة IRNode مرّةً واحدة، ثمّ تُسلِّمها لخلفيّة
@@ -480,3 +486,5 @@ AlifModuleDef _alifGraphicsModule_ = {
 AlifObject* alifInit_graphics(void) {
 	return alifModuleDef_init(&_alifGraphicsModule_);
 }
+
+#endif /* ALIF_WITH_GRAPHICS */

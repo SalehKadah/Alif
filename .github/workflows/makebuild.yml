@@ -17,14 +17,28 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      # - name: configure
-      #   run: ./configure
+
+      # وحدةُ «رسومات» تحتاج SDL2 و SDL2_ttf. وهما أوّلُ تبعيّةٍ خارجيّةٍ
+      # في تاريخ بناءِ ألف — وبدونهما يبني Makefile ألفَ بلا رسومات.
+      - name: تثبيت SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev pkg-config
+
       - name: make
         run: cd linuxBuild && make ${{matrix.BUILD-CONFIGURATION}}
 
       # البناء يثبت أن الشيفرة تُرجمت لا أن المفسّر يعمل، فنشغّل ما بُني
       - name: تشغيل ما بُني
         run: bash .github/scripts/run_check.sh linuxBuild/build/alif
+
+      # البناءُ الأخضرُ لا يعني أنّ الوحدةَ دخلت: لو غابت SDL2 لبُنيت ألفُ
+      # بلا رسوماتٍ وخرج البناءُ أخضرَ صامتاً. فنفحص الاستيرادَ صراحةً.
+      - name: فحصُ وحدة الرسومات
+        run: |
+          echo 'استورد رسومات' > /tmp/gfx_check.alif
+          echo 'اطبع("رسومات موجودة")' >> /tmp/gfx_check.alif
+          linuxBuild/build/alif /tmp/gfx_check.alif
     # - name: make check
     #   run: make check
     # - name: make distcheck
@@ -43,9 +57,19 @@ jobs:
           submodules: true
           # lfs: true
 
+      - name: تثبيت SDL2
+        run: brew install sdl2 sdl2_ttf pkg-config
+
       - name: make
         run: cd linuxBuild && make ${{matrix.BUILD-CONFIGURATION}}
 
       # البناء يثبت أن الشيفرة تُرجمت لا أن المفسّر يعمل، فنشغّل ما بُني
       - name: تشغيل ما بُني
         run: bash .github/scripts/run_check.sh linuxBuild/build/alif
+      # البناءُ الأخضرُ لا يعني أنّ الوحدةَ دخلت: لو غابت SDL2 لبُنيت ألفُ
+      # بلا رسوماتٍ وخرج البناءُ أخضرَ صامتاً. فنفحص الاستيرادَ صراحةً.
+      - name: فحصُ وحدة الرسومات
+        run: |
+          echo 'استورد رسومات' > /tmp/gfx_check.alif
+          echo 'اطبع("رسومات موجودة")' >> /tmp/gfx_check.alif
+          linuxBuild/build/alif /tmp/gfx_check.alif

@@ -11,7 +11,7 @@ IS_CLANG := $(shell $(CPP) --version 2>/dev/null | grep -ci clang)
 ifeq ($(IS_CLANG),0)
 CHARSET_FLAGS = -finput-charset=UTF-8 -fexec-charset=UTF-8
 endif
-CPPFLAGS = -std=c++20 $(CHARSET_FLAGS)
+CPPFLAGS = -std=c++20 $(CHARSET_FLAGS) $(GRAPHICS_DEFINES)
 RELEASE_FLAGS = -O2 -w
 DEBUG_FLAGS = -O0 -g
 # -g تخزين معلومات debug
@@ -28,12 +28,34 @@ TARGET_ALIF = $(BUILD_DIR)/alif
 OS_NAME := $(shell uname -s)
 
 
+
+# ═══ الرسومات: SDL2 و SDL2_ttf ═══
+# المكتبتان اختياريّتان. إن وُجدتا بُنيت وحدةُ «رسومات»، وإلّا بُنيت ألفُ
+# كما كانت بلا رسومات — فلا يُكسر بناءُ من لا يملكهما. الغيابُ يُطبَع صراحةً
+# لا صامتاً. التركيب: apt install libsdl2-dev libsdl2-ttf-dev
+#                   brew install sdl2 sdl2_ttf
+HAVE_SDL2 := $(shell pkg-config --exists sdl2 SDL2_ttf 2>/dev/null && echo 1 || echo 0)
+ifeq ($(HAVE_SDL2),1)
+GRAPHICS_DIR = $(SOURCE_DIR)/Modules/Graphics
+GRAPHICS_SOURCES = 		$(wildcard $(GRAPHICS_DIR)/core/src/*.cpp)		\
+			$(wildcard $(GRAPHICS_DIR)/desktop/src/*.cpp)
+GRAPHICS_INCLUDES = -I$(GRAPHICS_DIR)/core/include			\
+			-I$(GRAPHICS_DIR)/desktop/include			\
+			-I$(GRAPHICS_DIR)					\
+			$(shell pkg-config --cflags sdl2 SDL2_ttf)
+GRAPHICS_DEFINES = -DALIF_WITH_GRAPHICS -DSAD_UI_USE_SDL2 -DSAD_UI_HAS_SDL_TTF
+GRAPHICS_LIBS = $(shell pkg-config --libs sdl2 SDL2_ttf)
+else
+$(info [ألف] SDL2/SDL2_ttf غير موجودتَين — وحدةُ «رسومات» معطّلة)
+endif
+
 SOURCES = 	$(wildcard $(SOURCE_DIR)/Alif/*.cpp)				\
 			$(filter-out $(SOURCE_DIR)/AlifCore/Objects/GetPath.cpp, $(wildcard $(SOURCE_DIR)/AlifCore/Objects/*.cpp))	\
 			$(wildcard $(SOURCE_DIR)/AlifCore/Objects/dtoa/*.cpp)	\
 			$(wildcard $(SOURCE_DIR)/Modules/*.cpp)			\
 			$(wildcard $(SOURCE_DIR)/Modules/_io/*.cpp)		\
 			$(wildcard $(SOURCE_DIR)/FreezeModule/*.cpp)		\
+			$(GRAPHICS_SOURCES)					\
 
 
 INCLUDES =  -I$(SOURCE_DIR)/Alif							\
@@ -46,6 +68,7 @@ INCLUDES =  -I$(SOURCE_DIR)/Alif							\
 			-I$(SOURCE_DIR)/AlifCore/Objects/clinic				\
 			-I$(SOURCE_DIR)/Modules/_io					\
 			-I$(SOURCE_DIR)/Modules/_io/clinic			\
+			$(GRAPHICS_INCLUDES)					\
 
 
 all: release
@@ -112,7 +135,7 @@ $(OBJ_DIR)/%.o: $(SOURCE_DIR)/%.cpp | $(OBJ_DIR)
 # يجب أن يكون موجودًا قبل بدء عملية الربط.
 $(TARGET_FREEZE): $(OBJECTS) | $(BUILD_DIR)
 	@echo "جاري ربط مجرد الشيفرة..."
-	@$(CPP) $(filter-out build/obj/Alif/alif.o build/obj/AlifCore/Objects/Frozen.o, $^) -o $@
+	@$(CPP) $(filter-out build/obj/Alif/alif.o build/obj/AlifCore/Objects/Frozen.o, $^) -o $@ $(GRAPHICS_LIBS)
 	@echo "تم بناء مجرد الشيفرة بنجاح"
 	@echo "جاري بناء ومعالجة البرامج المكتوبة بلغة ألف"
 	@$(shell) ./build/freezemodule GetPath ../source/Modules/تحديد_المسارات.alif GetPath.h
@@ -124,7 +147,7 @@ $(TARGET_ALIF): $(OBJECTS) | $(BUILD_DIR)
 	@$(CPP) $(CPPFLAGS) -c $(SOURCE_DIR)/AlifCore/Objects/GetPath.cpp -o $(OBJ_DIR)/AlifCore/Objects/GetPath.o
 	@echo "جاري ربط لغة ألف..."
 	@$(CPP) $(filter-out build/obj/FreezeModule/FreezeModule.o build/obj/FreezeModule/GetPathFreeze.o, $^)	\
-	 -o $@ $(OBJ_DIR)/AlifCore/Objects/GetPath.o
+	 -o $@ $(OBJ_DIR)/AlifCore/Objects/GetPath.o $(GRAPHICS_LIBS)
 	@echo "تم بناء لغة ألف بنجاح"
 
 
@@ -140,6 +163,8 @@ $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)/Modules
 	@mkdir -p $(OBJ_DIR)/Modules/_io
 	@mkdir -p $(OBJ_DIR)/FreezeModule
+	@mkdir -p $(OBJ_DIR)/Modules/Graphics/core/src
+	@mkdir -p $(OBJ_DIR)/Modules/Graphics/desktop/src
 endif
 
 
