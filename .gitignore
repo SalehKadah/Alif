@@ -10,3 +10,10 @@ DerivedData
 *.eddx
 *.xopp
 *.DS_Store
+
+# مخرجاتُ البناء وآثارُ المِجَسّات — تسرّب منها ملفٌّ إلى الشجرة من قبل
+*.obj
+*.o
+*.exe
+*.bmp
+linuxBuild/build/
