@@ -23,7 +23,7 @@ jobs:
       - name: تثبيت SDL2
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev pkg-config
+          sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev pkg-config xvfb
 
       - name: make
         run: cd linuxBuild && make ${{matrix.BUILD-CONFIGURATION}}
@@ -39,6 +39,9 @@ jobs:
           echo 'استورد رسومات' > /tmp/gfx_check.alif
           echo 'اطبع("رسومات موجودة")' >> /tmp/gfx_check.alif
           linuxBuild/build/alif /tmp/gfx_check.alif
+      # عدّاءُ أوبنتو بلا خادمِ عرض، وSDL يحتاج واحداً ليفتح نافذة
+      - name: اختباراتُ الرسومات
+        run: xvfb-run -a python3 tests/graphics/فحص.py linuxBuild/build/alif
     # - name: make check
     #   run: make check
     # - name: make distcheck
@@ -73,3 +76,5 @@ jobs:
           echo 'استورد رسومات' > /tmp/gfx_check.alif
           echo 'اطبع("رسومات موجودة")' >> /tmp/gfx_check.alif
           linuxBuild/build/alif /tmp/gfx_check.alif
+      - name: اختباراتُ الرسومات
+        run: python3 tests/graphics/فحص.py linuxBuild/build/alif
