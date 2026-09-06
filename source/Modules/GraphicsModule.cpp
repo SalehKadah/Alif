@@ -721,7 +721,14 @@ static AlifObject* graphics_snapshot(AlifObject* _module, AlifObject* _args) {
 			   بلا عمل. و`takeScreenshot` يقرأ من هدفِ التصيير بعد
 			   `SDL_RenderPresent`، ومحتواه غيرُ معرَّفٍ على بعض المنصّات
 			   (‏Metal على ماك). فنُجبِر تصييراً في كلّ إطار. */
-			for (int i = 0; i < 6; i++) { window.invalidate(); window.runOneFrame(); }
+			/* اثنتا عشرةَ إطارةً بفاصلٍ قصير: عدّاءُ ماك في تهيئةِ التصحيح
+			   يُنهي بعضَ المشاهدِ قبل أن يستقرّ التصيير (٢ من ٤ في الدورة
+			   ‏34024665887)، والإصدارُ يمرّ بأربعةٍ من أربعة. */
+			for (int i = 0; i < 12; i++) {
+				window.invalidate();
+				window.runOneFrame();
+				std::this_thread::sleep_for(std::chrono::milliseconds(16));
+			}
 			ok = window.takeScreenshot(path);
 			window.destroy();
 		}
